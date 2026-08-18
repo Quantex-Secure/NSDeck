@@ -18,7 +18,7 @@ NSDeck is a .NET 10 WPF administration console for managing public and private D
 
 ## Supported providers
 
-- Namecheap BasicDNS
+- Namecheap BasicDNS and PremiumDNS
 - Microsoft Azure DNS
 - GoDaddy DNS
 - Cloudflare DNS
