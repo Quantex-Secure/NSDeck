@@ -1,0 +1,180 @@
+<Window x:Class="NSDeck.Desktop.Dialogs.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="NSDeck Settings" Height="780" Width="860"
+        MinHeight="680" MinWidth="760" WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
+    <Window.Resources>
+        <Style x:Key="InstructionPanelStyle" TargetType="Border">
+            <Setter Property="Background" Value="#F5F8FD"/>
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="5"/>
+            <Setter Property="Padding" Value="14"/>
+            <Setter Property="Margin" Value="0,0,0,18"/>
+        </Style>
+        <Style x:Key="InstructionTextStyle" TargetType="TextBlock">
+            <Setter Property="TextWrapping" Value="Wrap"/>
+            <Setter Property="Margin" Value="0,3,0,0"/>
+            <Setter Property="Foreground" Value="{StaticResource MutedTextBrush}"/>
+        </Style>
+        <Style x:Key="SetupLinkStyle" TargetType="Button" BasedOn="{StaticResource ToolbarButtonStyle}">
+            <Setter Property="HorizontalAlignment" Value="Left"/>
+            <Setter Property="Foreground" Value="{StaticResource AccentBrush}"/>
+            <Setter Property="Padding" Value="0,7"/>
+            <Setter Property="Margin" Value="0,6,0,0"/>
+        </Style>
+    </Window.Resources>
+    <Grid Margin="24">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <TextBlock Grid.Row="0" Text="DNS provider accounts and updates" FontSize="24" FontWeight="SemiBold"/>
+        <TextBlock Grid.Row="1" Margin="0,7,0,18" TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}"
+                   Text="Enable any providers you want shown in the account tree. Stored credentials are encrypted for this Windows account."/>
+        <TabControl Grid.Row="2">
+            <TabItem Header="Namecheap">
+                <ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="18">
+                    <Border Style="{StaticResource InstructionPanelStyle}"><StackPanel>
+                        <TextBlock Text="How to connect Namecheap" FontWeight="SemiBold"/>
+                        <TextBlock Style="{StaticResource InstructionTextStyle}" Text="1. Sign in to Namecheap and open Profile → Tools → Namecheap API Access."/>
+                        <TextBlock Style="{StaticResource InstructionTextStyle}" Text="2. Enable API access and copy the API key. Your Namecheap username is normally both the API user and account username."/>
+                        <TextBlock Style="{StaticResource InstructionTextStyle}" Text="3. Add this computer's public IPv4 address to Whitelisted IPs. Namecheap accepts IPv4 only."/>
+                        <TextBlock Style="{StaticResource InstructionTextStyle}" Text="4. Enter those values below. For testing, create a separate Namecheap Sandbox account and select Use Namecheap sandbox."/>
+                        <Button Content="Open Namecheap API instructions ↗" Style="{StaticResource SetupLinkStyle}" Tag="https://www.namecheap.com/support/api/intro/" Click="OpenSetupPage_Click"/>
+                    </StackPanel></Border>
+                    <CheckBox x:Name="NamecheapEnabled" Content="Enable Namecheap" FontWeight="SemiBold" Margin="0,0,0,16"/>
+                    <TextBlock Text="API user"/><TextBox x:Name="NamecheapApiUser" Margin="0,5,0,12"/>
+                    <TextBlock Text="Account username"/><TextBox x:Name="NamecheapUserName" Margin="0,5,0,12"/>
+                    <TextBlock Text="API key"/><PasswordBox x:Name="NamecheapApiKey" Margin="0,5,0,12"/>
+                    <TextBlock Text="Whitelisted public IPv4"/><TextBox x:Name="NamecheapClientIp" Margin="0,5,0,12"/>
+                    <CheckBox x:Name="NamecheapSandbox" Content="Use Namecheap sandbox"/>
+                </StackPanel></ScrollViewer>
+            </TabItem>
+            <TabItem Header="Azure DNS">
+                <ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="18">
+                    <Border Style="{StaticResource InstructionPanelStyle}"><StackPanel>
+                        <TextBlock Text="How to connect Azure DNS" FontWeight="SemiBold"/>
+                        <TextBlock Style="{StaticResource InstructionTextStyle}" Text="1. Copy the Subscription ID from Azure Portal → Subscriptions and enter it below."/>
+                        <TextBlock Style="{StaticResource InstructionTextStyle}" Text="2. Easiest option: sign in through Azure CLI, Visual Studio, or the browser prompt, then leave Tenant ID, Client ID, and Client secret blank."/>
+                        <TextBlock Style="{StaticResource InstructionTextStyle}" Text="3. Service-principal option: create an Entra ID app registration, copy its Directory (tenant) ID and Application (client) ID, then create a client secret."/>
+                        <TextBlock Style="{StaticResource InstructionTextStyle}" Text="4. Assign that user or service principal the DNS Zone Contributor role at the subscription, resource group, or individual DNS-zone scope."/>
+                        <Button Content="Open Azure DNS access instructions ↗" Style="{StaticResource SetupLinkStyle}" Tag="https://learn.microsoft.com/en-us/azure/dns/dns-protect-zones-recordsets" Click="OpenSetupPage_Click"/>
+                    </StackPanel></Border>
+                    <CheckBox x:Name="AzureEnabled" Content="Enable Azure DNS" FontWeight="SemiBold" Margin="0,0,0,16"/>
+                    <TextBlock Text="Subscription ID"/><TextBox x:Name="AzureSubscriptionId" Margin="0,5,0,12"/>
+                    <TextBlock Text="Tenant ID (optional when Azure CLI, Visual Studio, or browser sign-in is used)"/><TextBox x:Name="AzureTenantId" Margin="0,5,0,12"/>
+                    <TextBlock Text="Application / client ID"/><TextBox x:Name="AzureClientId" Margin="0,5,0,12"/>
+                    <TextBlock Text="Client secret"/><PasswordBox x:Name="AzureClientSecret" Margin="0,5,0,12"/>
+                    <TextBlock TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" Text="Supply all three service-principal fields together, or leave all three blank to use your existing Azure sign-in."/>
+                </StackPanel></ScrollViewer>
+            </TabItem>
+            <TabItem Header="GoDaddy">
+                <ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="18">
+                    <Border Style="{StaticResource InstructionPanelStyle}"><StackPanel>
+                        <TextBlock Text="How to connect GoDaddy" FontWeight="SemiBold"/>
+                        <TextBlock Style="{StaticResource InstructionTextStyle}" Text="1. Sign in to the GoDaddy Personal Access Token page and choose Generate Token."/>
+                        <TextBlock Style="{StaticResource InstructionTextStyle}" Text="2. Give the token domains.domain:read and domains.dns:update scopes. Nameserver-update permission is not required by this record editor."/>
+                        <TextBlock Style="{StaticResource InstructionTextStyle}" Text="3. Copy the token when it is displayed—it is shown only once—and paste it below."/>
+                        <TextBlock Style="{StaticResource InstructionTextStyle}" Text="4. Confirm the domains use GoDaddy authoritative nameservers; GoDaddy cannot edit a zone hosted by another DNS provider."/>
+                        <Button Content="Open GoDaddy token instructions ↗" Style="{StaticResource SetupLinkStyle}" Tag="https://developer.godaddy.com/en/docs/api-users/auth/how-to" Click="OpenSetupPage_Click"/>
+                    </StackPanel></Border>
+                    <CheckBox x:Name="GoDaddyEnabled" Content="Enable GoDaddy" FontWeight="SemiBold" Margin="0,0,0,16"/>
+                    <TextBlock Text="Personal Access Token"/><PasswordBox x:Name="GoDaddyToken" Margin="0,5,0,12"/>
+                    <TextBlock TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" Text="Required scopes: domains.domain:read and domains.dns:update."/>
+                </StackPanel></ScrollViewer>
+            </TabItem>
+            <TabItem Header="Cloudflare">
+                <ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="18">
+                    <Border Style="{StaticResource InstructionPanelStyle}"><StackPanel>
+                        <TextBlock Text="How to connect Cloudflare" FontWeight="SemiBold"/>
+                        <TextBlock Style="{StaticResource InstructionTextStyle}" Text="1. In Cloudflare, open My Profile → API Tokens and choose Create Token."/>
+                        <TextBlock Style="{StaticResource InstructionTextStyle}" Text="2. Start with the Edit Zone DNS template, then ensure the token has Zone Read and DNS Edit access."/>
+                        <TextBlock Style="{StaticResource InstructionTextStyle}" Text="3. Limit Zone Resources to the specific zones this application should manage, or include all zones if required."/>
+                        <TextBlock Style="{StaticResource InstructionTextStyle}" Text="4. Create the token, copy the secret when shown, and paste it below."/>
+                        <Button Content="Open Cloudflare token instructions ↗" Style="{StaticResource SetupLinkStyle}" Tag="https://developers.cloudflare.com/fundamentals/api/get-started/create-token/" Click="OpenSetupPage_Click"/>
+                    </StackPanel></Border>
+                    <CheckBox x:Name="CloudflareEnabled" Content="Enable Cloudflare" FontWeight="SemiBold" Margin="0,0,0,16"/>
+                    <TextBlock Text="API token"/><PasswordBox x:Name="CloudflareToken" Margin="0,5,0,12"/>
+                    <TextBlock TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" Text="Use a scoped token instead of the Global API Key."/>
+                </StackPanel></ScrollViewer>
+            </TabItem>
+            <TabItem Header="Route 53">
+                <ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="18">
+                    <Border Style="{StaticResource InstructionPanelStyle}"><StackPanel>
+                        <TextBlock Text="How to connect AWS Route 53" FontWeight="SemiBold"/>
+                        <TextBlock Style="{StaticResource InstructionTextStyle}" Text="1. In AWS IAM, create or select a dedicated IAM user. Do not use the root account."/>
+                        <TextBlock Style="{StaticResource InstructionTextStyle}" Text="2. Grant route53:ListHostedZones, route53:ListResourceRecordSets, and route53:ChangeResourceRecordSets. The last two can be limited to selected hosted-zone ARNs."/>
+                        <TextBlock Style="{StaticResource InstructionTextStyle}" Text="3. Open the IAM user's Security credentials tab and create an access key. Copy both the access key ID and secret access key."/>
+                        <TextBlock Style="{StaticResource InstructionTextStyle}" Text="4. Paste temporary Session Token credentials too when using AWS STS; otherwise leave Session token blank."/>
+                        <Button Content="Open AWS access-key instructions ↗" Style="{StaticResource SetupLinkStyle}" Tag="https://docs.aws.amazon.com/IAM/latest/UserGuide/access-keys-admin-managed.html" Click="OpenSetupPage_Click"/>
+                    </StackPanel></Border>
+                    <CheckBox x:Name="Route53Enabled" Content="Enable AWS Route 53" FontWeight="SemiBold" Margin="0,0,0,16"/>
+                    <TextBlock Text="Access key ID"/><TextBox x:Name="AwsAccessKeyId" Margin="0,5,0,12"/>
+                    <TextBlock Text="Secret access key"/><PasswordBox x:Name="AwsSecretAccessKey" Margin="0,5,0,12"/>
+                    <TextBlock Text="Session token (optional)"/><PasswordBox x:Name="AwsSessionToken" Margin="0,5,0,12"/>
+                    <TextBlock TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" Text="Use a dedicated least-privilege IAM identity and rotate long-lived access keys regularly."/>
+                </StackPanel></ScrollViewer>
+            </TabItem>
+            <TabItem Header="Google Cloud">
+                <ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="18">
+                    <Border Style="{StaticResource InstructionPanelStyle}"><StackPanel>
+                        <TextBlock Text="How to connect Google Cloud DNS" FontWeight="SemiBold"/>
+                        <TextBlock Style="{StaticResource InstructionTextStyle}" Text="1. Select the Google Cloud project that owns the zones and enable the Cloud DNS API."/>
+                        <TextBlock Style="{StaticResource InstructionTextStyle}" Text="2. Create a service account and grant it DNS Administrator (roles/dns.admin) for that project."/>
+                        <TextBlock Style="{StaticResource InstructionTextStyle}" Text="3. Open the service account → Keys → Add key → Create new key → JSON. Save the downloaded file securely and select it below."/>
+                        <TextBlock Style="{StaticResource InstructionTextStyle}" Text="4. Enter the Project ID. Alternatively, run gcloud auth application-default login and leave the JSON path blank."/>
+                        <Button Content="Open Google service-account instructions ↗" Style="{StaticResource SetupLinkStyle}" Tag="https://docs.cloud.google.com/iam/docs/keys-create-delete" Click="OpenSetupPage_Click"/>
+                    </StackPanel></Border>
+                    <CheckBox x:Name="GoogleEnabled" Content="Enable Google Cloud DNS" FontWeight="SemiBold" Margin="0,0,0,16"/>
+                    <TextBlock Text="Project ID"/><TextBox x:Name="GoogleProjectId" Margin="0,5,0,12"/>
+                    <TextBlock Text="Service-account JSON file (optional with Application Default Credentials)"/>
+                    <DockPanel Margin="0,5,0,12"><Button DockPanel.Dock="Right" Content="Browse…" Margin="8,0,0,0" Click="BrowseGoogleCredentials_Click"/><TextBox x:Name="GoogleCredentialsPath"/></DockPanel>
+                    <TextBlock TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" Text="Keep the JSON key outside the project folder and treat it like a password."/>
+                </StackPanel></ScrollViewer>
+            </TabItem>
+            <TabItem Header="Windows DNS">
+                <ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="18">
+                    <Border Style="{StaticResource InstructionPanelStyle}"><StackPanel>
+                        <TextBlock Text="Connect without giving this application Domain Admin credentials" FontWeight="SemiBold"/>
+                        <TextBlock Style="{StaticResource InstructionTextStyle}" Text="1. Create a domain group such as CONTOSO\NSDeck-DnsOperators and add only the users allowed to change DNS records."/>
+                        <TextBlock Style="{StaticResource InstructionTextStyle}" Text="2. Save the setup script below, copy it to each Windows DNS server, and run it once from an elevated Windows PowerShell 5.1 window using an account authorized to register JEA endpoints."/>
+                        <TextBlock Style="{StaticResource InstructionTextStyle}" Text="3. Example: .\Install-NSDeckJea.ps1 -OperatorGroup 'CONTOSO\NSDeck-DnsOperators'"/>
+                        <TextBlock Style="{StaticResource InstructionTextStyle}" Text="4. Sign out and back in after group membership changes. Enter the DNS server names below, then test the connection."/>
+                        <TextBlock Style="{StaticResource InstructionTextStyle}" Text="The app connects as your current Windows identity through a constrained JEA endpoint. It never asks for or stores the Domain Admin password. JEA transcripts are written under ProgramData on the DNS server."/>
+                        <StackPanel Orientation="Horizontal" Margin="0,9,0,0">
+                            <Button Content="Save server setup script…" Style="{StaticResource ToolbarButtonStyle}" Click="SaveJeaSetupScript_Click"/>
+                            <Button Content="Open Microsoft JEA guidance ↗" Style="{StaticResource SetupLinkStyle}" Margin="12,0,0,0" Tag="https://learn.microsoft.com/en-us/powershell/scripting/security/remoting/jea/overview" Click="OpenSetupPage_Click"/>
+                        </StackPanel>
+                    </StackPanel></Border>
+                    <CheckBox x:Name="WindowsDnsEnabled" Content="Enable Windows DNS" FontWeight="SemiBold" Margin="0,0,0,16"/>
+                    <TextBlock Text="DNS server names"/>
+                    <TextBox x:Name="WindowsDnsServers" Margin="0,5,0,4" AcceptsReturn="True" MinHeight="54" VerticalScrollBarVisibility="Auto"/>
+                    <TextBlock TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,12" Text="Enter one or more server names separated by commas, semicolons, or new lines. Each server appears as its own provider node."/>
+                    <TextBlock Text="JEA endpoint name"/>
+                    <TextBox x:Name="WindowsDnsEndpointName" Margin="0,5,0,12" Text="NSDeck.Dns"/>
+                    <CheckBox x:Name="WindowsDnsPublicAuthoritative" Content="These Windows DNS servers host public authoritative zones" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                    <TextBlock TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,12" Text="Leave this off for Active Directory, internal, or split-horizon DNS. When enabled, NSDeck offers public resolver propagation checks after changes."/>
+                    <Button x:Name="TestWindowsDns" Content="Test constrained connection" HorizontalAlignment="Left" Style="{StaticResource PrimaryButtonStyle}" Click="TestWindowsDns_Click"/>
+                    <TextBlock x:Name="WindowsDnsTestStatus" TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" Margin="0,10,0,0"
+                               Text="The test uses your current Windows account; no alternate credential is requested."/>
+                </StackPanel></ScrollViewer>
+            </TabItem>
+            <TabItem Header="Updates">
+                <ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="18">
+                    <Border Style="{StaticResource InstructionPanelStyle}"><StackPanel>
+                        <TextBlock Text="Secure update notifications" FontWeight="SemiBold"/>
+                        <TextBlock Style="{StaticResource InstructionTextStyle}" Text="1. Publish the generated update-manifest.json and release files at a stable HTTPS location."/>
+                        <TextBlock Style="{StaticResource InstructionTextStyle}" Text="2. Enter the manifest's HTTPS address below. The application only checks versions and opens the download page after your confirmation."/>
+                        <TextBlock Style="{StaticResource InstructionTextStyle}" Text="3. Automatic installation remains disabled until releases are Authenticode-signed; this prevents an unsigned remote file from silently replacing the application."/>
+                    </StackPanel></Border>
+                    <CheckBox x:Name="UpdatesAutomatic" Content="Check automatically when the application starts" FontWeight="SemiBold" Margin="0,0,0,16"/>
+                    <TextBlock Text="HTTPS update manifest address"/>
+                    <TextBox x:Name="UpdateManifestUrl" Margin="0,5,0,12"/>
+                    <TextBlock TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" Text="Example: https://downloads.example.com/nsdeck/update-manifest.json"/>
+                </StackPanel></ScrollViewer>
+            </TabItem>
+        </TabControl>
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0">
+            <Button Content="Cancel" Style="{StaticResource ToolbarButtonStyle}" MinWidth="92" Click="Cancel_Click"/>
+            <Button Content="Save and Connect" Style="{StaticResource PrimaryButtonStyle}" MinWidth="140" Margin="8,0,0,0" Click="Save_Click"/>
+        </StackPanel>
+    </Grid>
+</Window>

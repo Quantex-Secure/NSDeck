@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/NSDeck.Core/NSDeck.Core.csproj" />
+    <Project Path="src/NSDeck.Desktop/NSDeck.Desktop.csproj" />
+    <Project Path="src/NSDeck.Providers.Namecheap/NSDeck.Providers.Namecheap.csproj" />
+    <Project Path="src/NSDeck.Providers.Cloud/NSDeck.Providers.Cloud.csproj" />
+    <Project Path="src/NSDeck.Providers.Windows/NSDeck.Providers.Windows.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/NSDeck.Tests/NSDeck.Tests.csproj" />
+  </Folder>
+</Solution>

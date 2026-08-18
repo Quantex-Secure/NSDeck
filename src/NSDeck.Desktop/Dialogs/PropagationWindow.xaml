@@ -1,0 +1,38 @@
+<Window x:Class="NSDeck.Desktop.Dialogs.PropagationWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="DNS Propagation Radar" Height="610" Width="1080"
+        MinHeight="460" MinWidth="820" WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
+    <Grid Margin="24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/><RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <Grid Grid.Row="0">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <StackPanel>
+                <TextBlock Text="DNS propagation radar" FontSize="24" FontWeight="SemiBold"/>
+                <TextBlock Text="Compare expected records with independent public recursive resolvers." Margin="0,6,0,0" Foreground="{StaticResource MutedTextBrush}"/>
+            </StackPanel>
+            <CheckBox x:Name="AutoRefreshBox" Grid.Column="1" Content="Auto-refresh every 30 seconds" IsChecked="True" VerticalAlignment="Center"/>
+        </Grid>
+        <Border Grid.Row="1" Background="#EFF6FF" BorderBrush="#BFDBFE" BorderThickness="1" CornerRadius="4" Padding="12" Margin="0,16,0,12">
+            <TextBlock Text="Resolver differences during a TTL window are informational and do not mean the provider save failed." Foreground="#1E40AF"/>
+        </Border>
+        <TextBlock x:Name="StatusText" Grid.Row="2" Text="Ready" Margin="0,0,0,10" Foreground="{StaticResource MutedTextBrush}"/>
+        <DataGrid x:Name="ResultsGrid" Grid.Row="3" IsReadOnly="True">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="210"/>
+                <DataGridTextColumn Header="Type" Binding="{Binding Type}" Width="70"/>
+                <DataGridTextColumn Header="Resolver" Binding="{Binding Resolver}" Width="160"/>
+                <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="120"/>
+                <DataGridTextColumn Header="Answer" Binding="{Binding Answer}" Width="*" MinWidth="240"/>
+                <DataGridTextColumn Header="TTL" Binding="{Binding TtlDisplay}" Width="90"/>
+            </DataGrid.Columns>
+        </DataGrid>
+        <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0">
+            <Button Content="Refresh Now" MinWidth="112" Style="{StaticResource PrimaryButtonStyle}" Click="Refresh_Click"/>
+            <Button Content="Close" MinWidth="92" Margin="8,0,0,0" Style="{StaticResource ToolbarButtonStyle}" Click="Close_Click"/>
+        </StackPanel>
+    </Grid>
+</Window>

@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Build and test
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install .NET 10 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore .\NSDeck.slnx
+
+      - name: Scan public source
+        shell: pwsh
+        run: .\scripts\Test-PublicRelease.ps1
+
+      - name: Test Windows PowerShell 5.1 JEA module
+        shell: powershell
+        run: .\scripts\Test-JeaModule.ps1
+
+      - name: Build
+        run: dotnet build .\NSDeck.slnx --configuration Release --no-restore
+
+      - name: Test
+        run: dotnet test .\NSDeck.slnx --configuration Release --no-build --no-restore

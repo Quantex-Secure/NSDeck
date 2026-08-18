@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\NSDeck.Core\NSDeck.Core.csproj" />
+    <ProjectReference Include="..\NSDeck.Providers.Namecheap\NSDeck.Providers.Namecheap.csproj" />
+    <ProjectReference Include="..\NSDeck.Providers.Cloud\NSDeck.Providers.Cloud.csproj" />
+    <ProjectReference Include="..\NSDeck.Providers.Windows\NSDeck.Providers.Windows.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\scripts\Install-NSDeckJea.ps1"
+                      LogicalName="NSDeck.Install-NSDeckJea.ps1" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <AssemblyName>NSDeck</AssemblyName>
+    <AssemblyTitle>NSDeck — Multi-provider DNS administration console</AssemblyTitle>
+    <ApplicationIcon>..\..\assets\nsdeck.ico</ApplicationIcon>
+    <Product>NSDeck</Product>
+    <Authors>Quantex Secure</Authors>
+    <Company>Quantex Secure</Company>
+    <Copyright>Copyright © 2026 Quantex Secure</Copyright>
+    <Description>Quantex Secure multi-provider DNS administration console.</Description>
+    <Version>0.6.0</Version>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+  </PropertyGroup>
+
+</Project>

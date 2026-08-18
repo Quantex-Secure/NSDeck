@@ -1,0 +1,10 @@
+<Project>
+  <PropertyGroup>
+    <Authors>Quantex Secure</Authors>
+    <Company>Quantex Secure</Company>
+    <Copyright>Copyright © 2026 Quantex Secure</Copyright>
+    <Product>NSDeck</Product>
+    <NeutralLanguage>en-US</NeutralLanguage>
+    <RepositoryType>git</RepositoryType>
+  </PropertyGroup>
+</Project>

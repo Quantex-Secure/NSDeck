@@ -1,0 +1,50 @@
+name: Feature request
+description: Suggest a provider, workflow, safety improvement, or administrative feature.
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: Describe the DNS administration problem, not just the proposed control.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: safety
+    attributes:
+      label: DNS safety and permissions
+      description: Explain the write scope, rollback behavior, authentication needs, and likely blast radius.
+
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Provider scope
+      options:
+        - Provider-independent
+        - Namecheap
+        - Azure DNS
+        - GoDaddy
+        - Cloudflare
+        - AWS Route 53
+        - Google Cloud DNS
+        - Windows DNS
+        - New provider
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy confirmation
+      options:
+        - label: This request contains no credentials, real DNS data, or private infrastructure details.
+          required: true
