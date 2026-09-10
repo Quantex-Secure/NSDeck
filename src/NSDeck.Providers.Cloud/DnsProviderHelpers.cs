@@ -1,5 +1,6 @@
 using System.Globalization;
 using NSDeck.Core.Models;
+using NSDeck.Core.Services;
 
 namespace NSDeck.Providers.Cloud;
 
@@ -23,6 +24,7 @@ internal static class DnsProviderHelpers
 
     public static (int? Priority, string Value) ParsePriorityValue(string type, string value)
     {
+        if (type.Equals("TXT", StringComparison.OrdinalIgnoreCase)) return (null, DnsRecordSemantics.DecodeText(value));
         if (!type.Equals("MX", StringComparison.OrdinalIgnoreCase)) return (null, value);
         var parts = value.Trim().Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
         return parts.Length == 2 && int.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out var priority)
@@ -31,6 +33,7 @@ internal static class DnsProviderHelpers
     }
 
     public static string FormatValue(DnsRecord record) =>
+        record.Type.Equals("TXT", StringComparison.OrdinalIgnoreCase) ? DnsRecordSemantics.EncodeText(record.Value) :
         record.Type.Equals("MX", StringComparison.OrdinalIgnoreCase) && record.Priority is not null
             ? $"{record.Priority.Value.ToString(CultureInfo.InvariantCulture)} {record.Value}"
             : record.Value;
@@ -50,7 +53,7 @@ internal static class DnsProviderHelpers
     private static string Canonical(DnsRecord record) => string.Join('|',
         record.Name.Trim().TrimEnd('.').ToLowerInvariant(),
         record.Type.Trim().ToUpperInvariant(),
-        record.Value.Trim(),
+        DnsRecordSemantics.CanonicalValue(record),
         record.TtlSeconds.ToString(CultureInfo.InvariantCulture),
         record.Priority?.ToString(CultureInfo.InvariantCulture) ?? string.Empty);
 }

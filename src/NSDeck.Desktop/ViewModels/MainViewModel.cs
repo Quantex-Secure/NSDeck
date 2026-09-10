@@ -32,6 +32,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     ];
 
     private readonly SettingsStore _settingsStore;
+    private readonly DraftStore _drafts;
+    private bool _demoMode = true;
+    private CancellationTokenSource? _operationCancellation;
+    public void CancelCurrentOperation() => _operationCancellation?.Cancel();
     private readonly IZoneSnapshotStore _snapshotStore;
     private readonly AuditLogService _auditLog;
     private IDnsProvider _provider = new DemoDnsProvider();
@@ -52,6 +56,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public MainViewModel(SettingsStore settingsStore, IZoneSnapshotStore snapshotStore, AuditLogService auditLog)
     {
         _settingsStore = settingsStore;
+        _drafts = new DraftStore(settingsStore.RootPath);
         _snapshotStore = snapshotStore;
         _auditLog = auditLog;
         RecordsView = CollectionViewSource.GetDefaultView(Records);
@@ -66,6 +71,24 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public IReadOnlyList<string> RecordTypes { get; } = ["All", .. DnsRecordTypes.All];
 
     public AppSettings Settings => _settings;
+    public IReadOnlyList<AccountProfile> Profiles => _settings.Profiles.Count > 0 ? _settings.Profiles : [new AccountProfile { Id = "legacy", Name = "Default" }];
+    public string ActiveProfileId => _settings.ActiveProfile?.Id ?? "legacy";
+
+    public Task SwitchProfileAsync(string profileId, CancellationToken cancellationToken = default)
+    {
+        if (profileId == ActiveProfileId) return Task.CompletedTask;
+        if (!_settings.Profiles.Any(p => p.Id == profileId)) throw new InvalidOperationException("The selected profile is no longer available.");
+        return ConfigureAsync(new AppSettings { Profiles = _settings.Profiles, ActiveProfileId = profileId, Updates = _settings.Updates }, cancellationToken);
+    }
+
+    private void NotifyProfileSettings()
+    {
+        OnPropertyChanged(nameof(Settings));
+        OnPropertyChanged(nameof(Profiles));
+        OnPropertyChanged(nameof(ActiveProfileId));
+        OnPropertyChanged(nameof(ProviderDisplay));
+        OnPropertyChanged(nameof(TargetDisplay));
+    }
 
     public DomainSummary? SelectedDomain
     {
@@ -101,12 +124,17 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             if (SetProperty(ref _isBusy, value))
             {
                 OnPropertyChanged(nameof(IsNotBusy));
+                OnPropertyChanged(nameof(CanEdit));
             }
         }
     }
 
     public bool IsNotBusy => !IsBusy;
-    public bool IsDemoMode => _provider is DemoDnsProvider;
+    public bool IsDemoMode => _demoMode;
+    public bool CanEdit => HasSelectedDomain && !_provider.IsReadOnly && !IsBusy;
+    public bool IsReadOnly => _provider.IsReadOnly;
+    public string TargetDisplay => SelectedDomain is null ? ProviderDisplay : $"{ProviderDisplay} / {SelectedDomain.DisplayName}{(IsReadOnly ? " — read-only" : "")}";
+    public ZoneValidationResult ValidateRecords(IReadOnlyList<DnsRecord> records) => _provider.ValidateRecords(records);
     public bool HasSelectedDomain => SelectedDomain is not null;
     public bool HasSelectedRecord => SelectedRecord is not null;
     public bool SupportsPublicDnsPropagation => _provider.SupportsPublicDnsPropagation;
@@ -114,7 +142,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public bool HasPendingChanges => PendingChanges.Count > 0;
     public string PendingChangesText => $"Pending Changes ({PendingChanges.Count})";
     public string CurrentDomainName => SelectedDomain?.Name ?? "Select a domain";
-    public string ProviderDisplay => _provider.ProviderName;
+    public string ProviderDisplay => !IsDemoMode && _providers.Count == 0 && _settings.ActiveProfile is { } profile ? profile.Name : _provider.ProviderName;
     public string RecordCountText => $"{Records.Count} record{(Records.Count == 1 ? string.Empty : "s")}";
 
     public string StatusMessage
@@ -172,72 +200,81 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
         _settings = await _settingsStore.LoadAsync(cancellationToken);
+        NotifyProfileSettings();
         await SetConfiguredProvidersAsync(_settings, cancellationToken);
         await LoadDomainsAsync(cancellationToken);
     }
 
     public async Task ConfigureAsync(AppSettings settings, CancellationToken cancellationToken = default)
     {
-        await _settingsStore.SaveAsync(settings, cancellationToken);
-        _settings = settings;
-        await SetConfiguredProvidersAsync(settings, cancellationToken);
-        OnPropertyChanged(nameof(Settings));
-        await LoadDomainsAsync(cancellationToken);
+        await RunBusyAsync(async ct =>
+        {
+            await SetConfiguredProvidersAsync(settings, ct);
+            await _settingsStore.SaveAsync(settings, ct);
+            _settings = settings;
+            NotifyProfileSettings();
+            await LoadDomainsCoreAsync(ct);
+        }, cancellationToken);
     }
 
     public async Task UseDemoAsync(CancellationToken cancellationToken = default)
     {
         DisposeProviders();
+        _demoMode = true;
         _providers.Add(new DemoDnsProvider());
         ActivateProvider(_providers[0]);
         await LoadDomainsAsync(cancellationToken);
     }
 
-    public async Task LoadDomainsAsync(CancellationToken cancellationToken = default)
+    public Task LoadDomainsAsync(CancellationToken cancellationToken = default) =>
+        RunBusyAsync(LoadDomainsCoreAsync, cancellationToken);
+
+    private async Task LoadDomainsCoreAsync(CancellationToken cancellationToken)
     {
-        await RunBusyAsync(async () =>
+        StatusMessage = "Loading domains from configured providers…";
+        Domains.Clear();
+        Accounts.Clear();
+        var errors = new List<string>();
+        foreach (var provider in _providers)
         {
-            StatusMessage = "Loading domains from configured providers…";
-            Domains.Clear();
-            Accounts.Clear();
-            var errors = new List<string>();
-            foreach (var provider in _providers)
+            try
             {
-                try
-                {
-                    var domains = await provider.GetDomainsAsync(cancellationToken);
-                    Accounts.Add(new ProviderAccountViewModel(provider, domains));
-                    foreach (var domain in domains) Domains.Add(domain);
-                }
-                catch (Exception exception)
-                {
-                    errors.Add($"{provider.ProviderName}: {exception.Message}");
-                    Accounts.Add(new ProviderAccountViewModel(provider, []));
-                }
+                var domains = await provider.GetDomainsAsync(cancellationToken);
+                Accounts.Add(new ProviderAccountViewModel(provider, domains));
+                foreach (var domain in domains) Domains.Add(domain);
             }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+            catch (Exception exception)
+            {
+                errors.Add($"{provider.ProviderName}: {exception.Message}");
+                Accounts.Add(new ProviderAccountViewModel(provider, []));
+            }
+        }
 
-            ConnectionStatus = IsDemoMode ? "Demo mode — configure providers" : $"{_providers.Count} provider{(_providers.Count == 1 ? string.Empty : "s")} configured";
-            OnPropertyChanged(nameof(IsDemoMode));
-            OnPropertyChanged(nameof(ProviderDisplay));
+        ConnectionStatus = IsDemoMode ? "Demo mode — configure providers" : $"{_settings.ActiveProfile?.Name ?? "Default"} — {_providers.Count} provider{(_providers.Count == 1 ? string.Empty : "s")} configured";
+        OnPropertyChanged(nameof(IsDemoMode));
+        OnPropertyChanged(nameof(ProviderDisplay));
 
-            if (Domains.Count > 0)
-            {
-                await SelectDomainCoreAsync(Domains[0], cancellationToken);
-                if (errors.Count > 0) StatusMessage = $"Loaded {Domains.Count} domains. Some providers failed: {string.Join(" | ", errors)}";
-            }
-            else
-            {
-                SelectedDomain = null;
-                Records.Clear();
-                _originalRecords = [];
-                RefreshChanges();
-                StatusMessage = errors.Count == 0 ? "No domains were returned by the configured providers." : string.Join(" | ", errors);
-            }
-        });
+        if (Domains.Count > 0)
+        {
+            await SelectDomainCoreAsync(Domains[0], cancellationToken);
+            if (errors.Count > 0) StatusMessage = $"Loaded {Domains.Count} domains. Some providers failed: {string.Join(" | ", errors)}";
+        }
+        else
+        {
+            SelectedDomain = null;
+            Records.Clear();
+            _originalRecords = [];
+            RefreshChanges();
+            StatusMessage = errors.Count > 0 ? string.Join(" | ", errors)
+                : _providers.Count == 0 && _settings.ActiveProfile is { } profile
+                    ? $"{profile.Name} has no enabled providers. Open File → DNS Provider Accounts, select this profile, and choose Configure providers."
+                    : "No domains were returned by the configured providers.";
+        }
     }
 
     public Task SelectDomainAsync(DomainSummary domain, CancellationToken cancellationToken = default) =>
-        RunBusyAsync(() => SelectDomainCoreAsync(domain, cancellationToken));
+        RunBusyAsync(ct => SelectDomainCoreAsync(domain, ct), cancellationToken);
 
     public Task RefreshZoneAsync(CancellationToken cancellationToken = default)
     {
@@ -246,11 +283,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             return Task.CompletedTask;
         }
 
-        return RunBusyAsync(() => SelectDomainCoreAsync(SelectedDomain, cancellationToken));
+        return RunBusyAsync(ct => SelectDomainCoreAsync(SelectedDomain, ct), cancellationToken);
     }
 
     public void AddRecord(DnsRecord record)
     {
+        EnsureEditable();
         Records.Add(new DnsRecordViewModel(record));
         SelectedRecord = Records.Last();
         RefreshChanges();
@@ -259,6 +297,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     public void UpdateRecord(DnsRecordViewModel target, DnsRecord updated)
     {
+        EnsureEditable();
+        if (target.Model.IsReadOnly) throw new InvalidOperationException(target.Model.ReadOnlyReason);
         target.Model.Name = updated.Name;
         target.Model.Type = updated.Type;
         target.Model.Value = updated.Value;
@@ -273,9 +313,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     public void DeleteRecords(IEnumerable<DnsRecordViewModel> records)
     {
+        EnsureEditable();
         var recordsToDelete = records
             .Distinct()
-            .Where(Records.Contains)
+            .Where(r => Records.Contains(r) && !r.Model.IsReadOnly)
             .ToArray();
         if (recordsToDelete.Length == 0) return;
 
@@ -292,10 +333,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public void ClearChanges()
     {
         SetRecords(_originalRecords);
+        DeleteDraft();
         StatusMessage = "Pending changes cleared.";
     }
 
-    public ZoneValidationResult ValidateCurrentZone() => ZoneValidator.Validate(CurrentRecords());
+    public ZoneValidationResult ValidateCurrentZone() => _provider.ValidateRecords(CurrentRecords());
 
     public DnsRiskReport AnalyzeCurrentRisks() => ZoneRiskAnalyzer.Analyze(_originalRecords, CurrentRecords());
 
@@ -312,6 +354,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             return ApplyZoneResult.NoChanges;
         }
 
+        EnsureEditable();
         var validation = ValidateCurrentZone();
         if (!validation.IsValid)
         {
@@ -319,8 +362,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
 
         ApplyZoneResult result = ApplyZoneResult.NoChanges;
-        await RunBusyAsync(async () =>
+        await RunBusyAsync(async operationToken =>
         {
+            cancellationToken = operationToken;
             var currentDomain = SelectedDomain.Name;
             StatusMessage = $"Checking {currentDomain} for outside changes…";
             var latestZone = await _provider.GetZoneAsync(currentDomain, cancellationToken);
@@ -336,7 +380,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 _provider.ProviderName,
                 DateTimeOffset.Now,
                 ZoneComparer.Fingerprint(_originalRecords),
-                _originalRecords.Select(record => record.Clone()).ToArray());
+                _originalRecords.Select(record => record.Clone()).ToArray(), _provider.AccountId, _provider.ZoneId);
             await _snapshotStore.SaveAsync(snapshot, cancellationToken);
 
             var desiredRecords = CurrentRecords();
@@ -346,7 +390,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 currentDomain, "started", changeCount, ZoneComparer.Fingerprint(desiredRecords)), cancellationToken);
             try
             {
-                await _provider.ReplaceZoneAsync(currentDomain, desiredRecords, cancellationToken);
+                await _provider.ReplaceZoneGuardedAsync(currentDomain, _originalRecords, desiredRecords, cancellationToken);
 
                 var verifiedZone = await WaitForVerifiedZoneAsync(currentDomain, desiredRecords, cancellationToken);
                 if (verifiedZone is null)
@@ -355,6 +399,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 }
 
                 SetRecords(verifiedZone.Records);
+                DeleteDraft();
                 _lastRefreshed = verifiedZone.RetrievedAt;
                 OnPropertyChanged(nameof(LastRefreshedText));
                 StatusMessage = $"{currentDomain} was updated and verified.";
@@ -366,9 +411,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             {
                 await _auditLog.WriteAsync(new DnsAuditEntry(DateTimeOffset.Now, "zone-apply", _provider.ProviderName,
                     currentDomain, "failed", changeCount, ZoneComparer.Fingerprint(desiredRecords), exception.Message), CancellationToken.None);
-                throw;
+                throw new InvalidOperationException("The DNS operation did not complete verification. Changes may already have reached the provider. Refresh before retrying; the pre-change snapshot and saved draft are retained. " + exception.Message, exception);
             }
-        });
+        }, cancellationToken);
 
         return result;
     }
@@ -376,11 +421,17 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public Task<IReadOnlyList<ZoneSnapshot>> GetSnapshotsAsync(CancellationToken cancellationToken = default) =>
         SelectedDomain is null
             ? Task.FromResult<IReadOnlyList<ZoneSnapshot>>([])
-            : _snapshotStore.GetRecentAsync(SelectedDomain.Name, cancellationToken: cancellationToken);
+            : _snapshotStore.GetRecentForTargetAsync(SelectedDomain.Name, _provider.AccountId, _provider.ZoneId, cancellationToken: cancellationToken);
 
     public void StageSnapshot(ZoneSnapshot snapshot)
     {
-        SetCurrentRecords(snapshot.Records);
+        EnsureEditable();
+        if (snapshot.AccountId is not null && (snapshot.AccountId != _provider.AccountId || snapshot.ZoneId != _provider.ZoneId))
+            throw new InvalidOperationException("This snapshot belongs to a different account or zone. Export its records and review a migration separately.");
+        var desired = snapshot.Records.Where(r => !r.IsReadOnly).Concat(_originalRecords.Where(r => r.IsReadOnly)).ToArray();
+        var validation = _provider.ValidateRecords(desired);
+        if (!validation.IsValid) throw new InvalidOperationException(validation.ErrorSummary);
+        SetCurrentRecords(desired);
         StatusMessage = $"Snapshot from {snapshot.CreatedAt:g} is staged. Review the changes before applying.";
     }
 
@@ -400,19 +451,30 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     {
         var account = Accounts.FirstOrDefault(item => item.Domains.Contains(domain))
             ?? throw new InvalidOperationException($"The provider account for {domain.Name} is no longer available.");
-        ActivateProvider(account.Provider);
+        var candidate = account.Provider.ForZone(domain);
         StatusMessage = $"Loading {domain.Name}…";
-        var zone = await _provider.GetZoneAsync(domain.Name, cancellationToken);
+        var zone = await candidate.GetZoneAsync(domain.Name, cancellationToken);
         if (!zone.IsUsingProviderDns)
         {
-            throw new InvalidOperationException($"{domain.Name} is not using {_provider.ProviderName} authoritative DNS. Its records cannot be enumerated through this provider.");
+            throw new InvalidOperationException($"{domain.Name} is not using {candidate.ProviderName} authoritative DNS. Its records cannot be enumerated through this provider.");
         }
 
+        // Commit the target and its records together only after a successful read.
+        var draft = _drafts.Load(domain.Name, candidate.AccountId, candidate.ZoneId);
+        ActivateProvider(candidate);
         SelectedDomain = domain;
         SetRecords(zone.Records);
+        OnPropertyChanged(nameof(TargetDisplay));
+        OnPropertyChanged(nameof(CanEdit));
         _lastRefreshed = zone.RetrievedAt;
         OnPropertyChanged(nameof(LastRefreshedText));
         StatusMessage = $"Loaded {Records.Count} records for {domain.Name}.";
+        if (draft is not null)
+        {
+            if (draft.OriginalFingerprint == ZoneComparer.Fingerprint(_originalRecords) && !IsReadOnly)
+            { SetCurrentRecords(draft.Records); StatusMessage = "Restored your saved draft. Review the pending changes before applying."; }
+            else StatusMessage = "A saved draft exists, but this zone changed or the account is read-only. Use Action → Restore Saved Draft to review it.";
+        }
     }
 
     private void SetRecords(IEnumerable<DnsRecord> records)
@@ -426,7 +488,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         _originalRecords = clones.Select(record => record.Clone()).ToArray();
         SelectedRecord = null;
-        RefreshChanges();
+        RefreshChanges(persistDraft: false);
         OnPropertyChanged(nameof(RecordCountText));
     }
 
@@ -441,7 +503,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         RefreshChanges();
     }
 
-    private void RefreshChanges()
+    private void RefreshChanges(bool persistDraft = true)
     {
         var changes = ZoneComparer.Diff(_originalRecords, CurrentRecords());
         PendingChanges.Clear();
@@ -453,9 +515,14 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         var changedIds = changes.ToDictionary(change => change.Record.LocalId, change => change.Kind.ToString());
         foreach (var record in Records)
         {
-            record.Status = changedIds.TryGetValue(record.LocalId, out var status) ? status : "Unchanged";
+            record.Status = record.Model.IsReadOnly ? "Read-only" : changedIds.TryGetValue(record.LocalId, out var status) ? status : "Unchanged";
         }
 
+        if (persistDraft && SelectedDomain is not null)
+        {
+            if (PendingChanges.Count == 0) DeleteDraft();
+            else _drafts.Save(new ZoneDraft(SelectedDomain.Name, _provider.AccountId, _provider.ZoneId, ZoneComparer.Fingerprint(_originalRecords), CurrentRecords()));
+        }
         RecordsView.Refresh();
         OnPropertyChanged(nameof(HasPendingChanges));
         OnPropertyChanged(nameof(PendingChangesText));
@@ -524,7 +591,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                record.Value.Contains(SearchText, StringComparison.OrdinalIgnoreCase);
     }
 
-    private async Task RunBusyAsync(Func<Task> operation)
+    private async Task RunBusyAsync(Func<CancellationToken, Task> operation, CancellationToken cancellationToken = default)
     {
         if (IsBusy)
         {
@@ -532,12 +599,16 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
 
         IsBusy = true;
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        cancellation.CancelAfter(TimeSpan.FromMinutes(5));
+        _operationCancellation = cancellation;
         try
         {
-            await operation();
+            await operation(cancellation.Token);
         }
         finally
         {
+            _operationCancellation = null;
             IsBusy = false;
         }
     }
@@ -549,34 +620,54 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(ProviderDisplay));
         OnPropertyChanged(nameof(SupportsPublicDnsPropagation));
         OnPropertyChanged(nameof(CanCheckPublicDns));
+        OnPropertyChanged(nameof(IsReadOnly));
+        OnPropertyChanged(nameof(TargetDisplay));
+        OnPropertyChanged(nameof(CanEdit));
     }
 
     private async Task SetConfiguredProvidersAsync(AppSettings settings, CancellationToken cancellationToken)
     {
-        DisposeProviders();
-        if (settings.Namecheap.Enabled)
-            _providers.Add(new NamecheapDnsProvider(new NamecheapOptions(settings.Namecheap.ApiUser, settings.Namecheap.UserName, settings.Namecheap.ApiKey, settings.Namecheap.ClientIp, settings.Namecheap.UseSandbox)));
-        if (settings.Azure.Enabled)
-            _providers.Add(new AzureDnsProvider(new AzureDnsOptions(settings.Azure.SubscriptionId, settings.Azure.TenantId, settings.Azure.ClientId, settings.Azure.ClientSecret)));
-        if (settings.GoDaddy.Enabled)
-            _providers.Add(new GoDaddyDnsProvider(new GoDaddyDnsOptions(settings.GoDaddy.Token)));
-        if (settings.Cloudflare.Enabled)
-            _providers.Add(new CloudflareDnsProvider(new CloudflareDnsOptions(settings.Cloudflare.Token)));
-        if (settings.Route53.Enabled)
-            _providers.Add(new Route53DnsProvider(new Route53DnsOptions(settings.Route53.AccessKeyId, settings.Route53.SecretAccessKey, settings.Route53.SessionToken)));
-        if (settings.Google.Enabled)
-            _providers.Add(await GoogleCloudDnsProvider.CreateAsync(new GoogleCloudDnsOptions(settings.Google.ProjectId, settings.Google.ServiceAccountJsonPath), cancellationToken));
-        if (settings.WindowsDns.Enabled)
+        var next = new List<IDnsProvider>();
+        AccountProfile[] profiles = [settings.ActiveProfile ?? new AccountProfile { Id = "legacy", Name = "Default", Connections = settings }];
+        try
         {
-            _windowsDnsRunner = new PowerShellJeaCommandRunner();
-            foreach (var server in ParseWindowsDnsServers(settings.WindowsDns.Servers))
-                _providers.Add(new WindowsDnsProvider(
-                    new WindowsDnsOptions(server, settings.WindowsDns.EndpointName, settings.WindowsDns.SupportsPublicDnsPropagation),
-                    _windowsDnsRunner));
+            foreach (var profile in profiles)
+            {
+                var c = profile.Connections;
+                void Add(IDnsProvider provider) => next.Add(new AccountDnsProvider(provider, profile.Id, profile.Name, profile.ReadOnly));
+                if (c.Namecheap.Enabled) Add(new NamecheapDnsProvider(new NamecheapOptions(c.Namecheap.ApiUser, c.Namecheap.UserName, c.Namecheap.ApiKey, c.Namecheap.ClientIp, c.Namecheap.UseSandbox)));
+                if (c.Azure.Enabled) Add(new AzureDnsProvider(new AzureDnsOptions(c.Azure.SubscriptionId, c.Azure.TenantId, c.Azure.ClientId, c.Azure.ClientSecret)));
+                if (c.GoDaddy.Enabled) Add(new GoDaddyDnsProvider(new GoDaddyDnsOptions(c.GoDaddy.Token)));
+                if (c.Cloudflare.Enabled) Add(new CloudflareDnsProvider(new CloudflareDnsOptions(c.Cloudflare.Token)));
+                if (c.Route53.Enabled) Add(new Route53DnsProvider(new Route53DnsOptions(c.Route53.AccessKeyId, c.Route53.SecretAccessKey, c.Route53.SessionToken)));
+                if (c.Google.Enabled) Add(await GoogleCloudDnsProvider.CreateAsync(new GoogleCloudDnsOptions(c.Google.ProjectId, c.Google.ServiceAccountJsonPath), cancellationToken));
+                if (c.WindowsDns.Enabled)
+                    foreach (var server in ParseWindowsDnsServers(c.WindowsDns.Servers))
+                        Add(new WindowsDnsProvider(new WindowsDnsOptions(server, c.WindowsDns.EndpointName, c.WindowsDns.SupportsPublicDnsPropagation)));
+            }
         }
-        if (_providers.Count == 0) _providers.Add(new DemoDnsProvider());
-        ActivateProvider(_providers[0]);
+        catch { foreach (var p in next.OfType<IDisposable>()) p.Dispose(); throw; }
+        DisposeProviders();
+        _demoMode = next.Count == 0 && settings.Profiles.Count == 0;
+        _providers.AddRange(next);
+        if (_demoMode) _providers.Add(new DemoDnsProvider());
+        SelectedDomain = null;
+        SetRecords([]);
+        _lastRefreshed = null;
+        OnPropertyChanged(nameof(LastRefreshedText));
+        ActivateProvider(_providers.FirstOrDefault() ?? new DemoDnsProvider());
     }
+
+    public void RestoreSavedDraft()
+    {
+        EnsureEditable();
+        var draft = _drafts.Load(SelectedDomain!.Name, _provider.AccountId, _provider.ZoneId);
+        if (draft is null) { StatusMessage = "No saved draft exists for this target."; return; }
+        StageSnapshot(new ZoneSnapshot(draft.Domain, _provider.ProviderName, DateTimeOffset.Now, draft.OriginalFingerprint, draft.Records, draft.AccountId, draft.ZoneId));
+        StatusMessage = "Saved draft staged against the current zone. Review every difference before applying.";
+    }
+    private void DeleteDraft() { if (SelectedDomain is not null) _drafts.Delete(SelectedDomain.Name, _provider.AccountId, _provider.ZoneId); }
+    private void EnsureEditable() { if (!CanEdit) throw new InvalidOperationException("Select a writable zone and wait for the current operation to finish."); }
 
     private static IReadOnlyList<string> ParseWindowsDnsServers(string value) => value
         .Split([',', ';', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)

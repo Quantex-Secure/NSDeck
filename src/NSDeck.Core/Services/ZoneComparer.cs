@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using NSDeck.Core.Models;
 
 namespace NSDeck.Core.Services;
@@ -40,15 +41,18 @@ public static class ZoneComparer
             .ToArray();
     }
 
-    public static string Fingerprint(IEnumerable<DnsRecord> records)
+    public static string Fingerprint(IEnumerable<DnsRecord> records, bool includeTransient = false)
     {
         var canonical = records
-            .Select(record => string.Join('\u001f',
+            .Where(record => includeTransient || !record.IsReadOnly || record.Type.ToUpperInvariant() is not ("SOA" or "RRSIG" or "NSEC" or "NSEC3"))
+            .Select(record => JsonSerializer.Serialize(new object[] {
                 record.Name.Trim().ToLowerInvariant(),
                 record.Type.Trim().ToUpperInvariant(),
-                record.Value.Trim(),
+                DnsRecordSemantics.CanonicalValue(record),
                 record.TtlSeconds,
-                record.Priority?.ToString() ?? string.Empty))
+                record.Priority?.ToString() ?? string.Empty,
+                record.IsReadOnly && record.Type.ToUpperInvariant() is "SOA" or "RRSIG" or "NSEC" or "NSEC3" ? "" : DnsRecordSemantics.CanonicalMetadata(record.ProviderMetadata),
+                record.IsReadOnly }))
             .OrderBy(value => value, StringComparer.Ordinal)
             .ToArray();
 

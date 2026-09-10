@@ -12,14 +12,14 @@ namespace NSDeck.Providers.Cloud;
 
 public sealed class Route53DnsProvider : IDnsProvider, IDisposable
 {
-    private readonly AmazonRoute53Client _client;
+    private readonly IAmazonRoute53 _client;
     private readonly Dictionary<string, string> _zoneIds = new(StringComparer.OrdinalIgnoreCase);
 
     public Route53DnsProvider(Route53DnsOptions options, IAmazonRoute53? client = null)
     {
-        if (client is AmazonRoute53Client concrete)
+        if (client is not null)
         {
-            _client = concrete;
+            _client = client;
             return;
         }
         if (string.IsNullOrWhiteSpace(options.AccessKeyId) || string.IsNullOrWhiteSpace(options.SecretAccessKey))
@@ -28,6 +28,16 @@ public sealed class Route53DnsProvider : IDnsProvider, IDisposable
             ? new BasicAWSCredentials(options.AccessKeyId, options.SecretAccessKey)
             : new SessionAWSCredentials(options.AccessKeyId, options.SecretAccessKey, options.SessionToken);
         _client = new AmazonRoute53Client(credentials, RegionEndpoint.USEast1);
+    }
+
+    public ZoneValidationResult ValidateRecords(IReadOnlyList<DnsRecord> records)
+    {
+        var basic = ZoneValidator.Validate(records);
+        if (!basic.IsValid) return basic;
+        try { foreach (var group in records.Where(r => !r.IsReadOnly).GroupBy(DnsProviderHelpers.GroupKey)) BuildSet("example.invalid", group.ToArray()); }
+        catch (Exception ex) when (ex is InvalidOperationException or FormatException or OverflowException)
+        { return new ZoneValidationResult([new ValidationIssue(ex.Message)]); }
+        return basic;
     }
 
     public string ProviderName => "AWS Route 53";
@@ -43,27 +53,38 @@ public sealed class Route53DnsProvider : IDnsProvider, IDisposable
             foreach (var zone in response.HostedZones ?? [])
             {
                 var name = zone.Name.TrimEnd('.');
-                _zoneIds[name] = zone.Id;
-                domains.Add(new DomainSummary(name, ProviderName));
+                _zoneIds[name] = _zoneIds.ContainsKey(name) ? string.Empty : zone.Id;
+                domains.Add(new DomainSummary(name, ProviderName, ZoneId: zone.Id, IsPublic: zone.Config?.PrivateZone != true));
             }
             marker = response.IsTruncated == true ? response.NextMarker : null;
         } while (!string.IsNullOrWhiteSpace(marker));
         return domains.OrderBy(domain => domain.Name, StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
-    public async Task<DnsZone> GetZoneAsync(string domain, CancellationToken cancellationToken = default)
+    public Task<DnsZone> GetZoneAsync(string domain, CancellationToken cancellationToken = default) => GetZoneAsync(new DomainSummary(domain, ProviderName), cancellationToken);
+
+    public async Task<DnsZone> GetZoneAsync(DomainSummary target, CancellationToken cancellationToken = default)
     {
-        var zoneId = await GetZoneIdAsync(domain, cancellationToken);
+        var domain = target.Name;
+        var zoneId = target.ZoneId ?? await GetZoneIdAsync(domain, cancellationToken);
         var sets = await ReadRecordSetsAsync(zoneId, cancellationToken);
         return new DnsZone(domain, ProviderName, Flatten(domain, sets), DateTimeOffset.Now);
     }
 
-    public async Task ReplaceZoneAsync(string domain, IReadOnlyList<DnsRecord> records, CancellationToken cancellationToken = default)
+    public Task ReplaceZoneAsync(string domain, IReadOnlyList<DnsRecord> records, CancellationToken ct = default) => ReplaceCoreAsync(new DomainSummary(domain, ProviderName), records, null, ct);
+    public Task ReplaceZoneAsync(DomainSummary zone, IReadOnlyList<DnsRecord> records, CancellationToken ct = default) => ReplaceCoreAsync(zone, records, null, ct);
+    public Task ReplaceZoneGuardedAsync(DomainSummary zone, IReadOnlyList<DnsRecord> expected, IReadOnlyList<DnsRecord> records, CancellationToken ct = default) => ReplaceCoreAsync(zone, records, expected, ct);
+    public Task ReplaceZoneGuardedAsync(string domain, IReadOnlyList<DnsRecord> expected, IReadOnlyList<DnsRecord> records, CancellationToken ct = default) => ReplaceCoreAsync(new DomainSummary(domain, ProviderName), records, expected, ct);
+
+    private async Task ReplaceCoreAsync(DomainSummary target, IReadOnlyList<DnsRecord> records, IReadOnlyList<DnsRecord>? expected, CancellationToken cancellationToken)
     {
+        var domain = target.Name;
         var validation = ZoneValidator.Validate(records);
         if (!validation.IsValid) throw new InvalidOperationException(validation.ErrorSummary);
-        var zoneId = await GetZoneIdAsync(domain, cancellationToken);
+        var zoneId = target.ZoneId ?? await GetZoneIdAsync(domain, cancellationToken);
         var currentSets = await ReadRecordSetsAsync(zoneId, cancellationToken);
+        ZoneWriteGuard.Check(Flatten(domain, currentSets), expected, records);
+        records = records.Where(r => !r.IsReadOnly).ToArray();
         var currentEditable = currentSets.Where(set => IsEditableSet(set, domain)).ToArray();
         var currentGroups = Flatten(domain, currentEditable).GroupBy(DnsProviderHelpers.GroupKey).ToDictionary(group => group.Key, group => group.ToArray());
         var currentSetByKey = currentEditable.ToDictionary(set => DnsProviderHelpers.GroupKey(DnsProviderHelpers.ToRelativeName(set.Name, domain), set.Type.Value));
@@ -111,7 +132,20 @@ public sealed class Route53DnsProvider : IDnsProvider, IDisposable
     private static IReadOnlyList<DnsRecord> Flatten(string domain, IEnumerable<AwsResourceRecordSet> sets)
     {
         var records = new List<DnsRecord>();
-        foreach (var set in sets.Where(set => IsEditableSet(set, domain)))
+        foreach (var set in sets)
+        {
+            if (!IsEditableSet(set, domain))
+            {
+                records.Add(new DnsRecord { Name = DnsProviderHelpers.ToRelativeName(set.Name, domain), Type = set.Type.Value,
+                    Value = System.Text.Json.JsonSerializer.Serialize(set), IsReadOnly = true,
+                    ReadOnlyReason = "Provider-managed or advanced routing record. Use the Route 53 console." });
+                continue;
+            }
+            AddEditable(set);
+        }
+        return records;
+
+        void AddEditable(AwsResourceRecordSet set)
         {
             var type = set.Type.Value;
             foreach (var value in set.ResourceRecords ?? [])
@@ -124,14 +158,13 @@ public sealed class Route53DnsProvider : IDnsProvider, IDisposable
                 });
             }
         }
-        return records;
     }
 
     private static bool IsEditableSet(AwsResourceRecordSet set, string domain)
     {
         var type = set.Type?.Value;
         var apex = DnsProviderHelpers.ToRelativeName(set.Name, domain) == "@";
-        return type != "SOA" && !(type == "NS" && apex) && set.AliasTarget is null && string.IsNullOrWhiteSpace(set.SetIdentifier);
+        return DnsRecordTypes.All.Contains(type ?? "") && type != "SOA" && !(type == "NS" && apex) && set.AliasTarget is null && string.IsNullOrWhiteSpace(set.SetIdentifier);
     }
 
     private static AwsResourceRecordSet BuildSet(string domain, IReadOnlyList<DnsRecord> records)
@@ -148,9 +181,9 @@ public sealed class Route53DnsProvider : IDnsProvider, IDisposable
 
     private async Task<string> GetZoneIdAsync(string domain, CancellationToken cancellationToken)
     {
-        if (_zoneIds.TryGetValue(domain, out var id)) return id;
+        if (_zoneIds.TryGetValue(domain, out var id) && !string.IsNullOrEmpty(id)) return id;
         await GetDomainsAsync(cancellationToken);
-        return _zoneIds.TryGetValue(domain, out id) ? id : throw new InvalidOperationException($"Route 53 hosted zone {domain} was not found.");
+        return _zoneIds.TryGetValue(domain, out id) && !string.IsNullOrEmpty(id) ? id : throw new InvalidOperationException($"Route 53 hosted zone {domain} was not found.");
     }
 
     public void Dispose() => _client.Dispose();

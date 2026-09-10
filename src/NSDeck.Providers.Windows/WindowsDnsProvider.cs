@@ -30,6 +30,14 @@ public sealed class WindowsDnsProvider : IDnsProvider, IDisposable
         }
     }
 
+    public ZoneValidationResult ValidateRecords(IReadOnlyList<DnsRecord> records)
+    {
+        var issues = ZoneValidator.Validate(records).Issues.ToList();
+        foreach (var type in records.Where(r => !r.IsReadOnly && !SupportedRecordTypes.Contains(r.Type)).Select(r => r.Type).Distinct())
+            issues.Add(new ValidationIssue($"The Windows DNS endpoint does not support editing {type}."));
+        return new ZoneValidationResult(issues);
+    }
+
     public string ProviderName => $"Windows DNS — {_options.Server}";
     public bool SupportsPublicDnsPropagation => _options.SupportsPublicDnsPropagation;
 
@@ -53,6 +61,8 @@ public sealed class WindowsDnsProvider : IDnsProvider, IDisposable
         var records = ParseItems(json).Select(item => new DnsRecord
         {
             Name = GetString(item, "Name"),
+            IsReadOnly = GetString(item, "IsReadOnly").Equals("True", StringComparison.OrdinalIgnoreCase),
+            ReadOnlyReason = "Provider-managed or unsupported Windows DNS record. Use DNS Manager.",
             Type = GetString(item, "Type").ToUpperInvariant(),
             Value = GetString(item, "Value"),
             TtlSeconds = GetInt32(item, "TtlSeconds") ?? 1800,
@@ -65,6 +75,7 @@ public sealed class WindowsDnsProvider : IDnsProvider, IDisposable
     {
         var validation = ZoneValidator.Validate(records);
         if (!validation.IsValid) throw new InvalidOperationException(validation.ErrorSummary);
+        records = records.Where(r => !r.IsReadOnly).ToArray();
         var unsupported = records.Select(record => record.Type).Where(type => !SupportedRecordTypes.Contains(type))
             .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(type => type, StringComparer.OrdinalIgnoreCase).ToArray();
         if (unsupported.Length > 0)

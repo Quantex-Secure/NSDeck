@@ -8,5 +8,6 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/NSDeck.Tests/NSDeck.Tests.csproj" />
+    <Project Path="tests/NSDeck.Desktop.Tests/NSDeck.Desktop.Tests.csproj" />
   </Folder>
 </Solution>

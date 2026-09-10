@@ -5,7 +5,9 @@ public sealed record DomainSummary(
     string Provider,
     bool IsExpired = false,
     bool IsLocked = false,
-    bool? IsUsingProviderDns = null)
+    bool? IsUsingProviderDns = null,
+    string? ZoneId = null,
+    bool IsPublic = true)
 {
-    public string DisplayName => Name;
+    public string DisplayName => ZoneId is null ? Name : $"{Name} ({(IsPublic ? "public" : "private")}, {ZoneId})";
 }

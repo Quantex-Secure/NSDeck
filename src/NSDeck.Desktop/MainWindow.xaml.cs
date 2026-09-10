@@ -24,6 +24,7 @@ public partial class MainWindow : Window
     private readonly bool _designPreview;
     private readonly bool _changeLabPreview;
     private bool _ignoreTreeSelection;
+    private bool _ignoreProfileSelection;
 
     public MainWindow(bool designPreview = false, bool changeLabPreview = false)
     {
@@ -35,7 +36,7 @@ public partial class MainWindow : Window
             Width = 1600;
             Height = 1000;
         }
-        var appRoot = AppDataMigration.PrepareApplicationRoot();
+        var appRoot = _designPreview ? Path.Combine(Path.GetTempPath(), "NSDeck-preview-" + Guid.NewGuid().ToString("N")) : AppDataMigration.PrepareApplicationRoot();
         _auditLog = new AuditLogService(appRoot);
         var snapshotStore = new JsonZoneSnapshotStore(Path.Combine(appRoot, "snapshots"));
         _changeLabService = new DnsChangeLabService(snapshotStore, _auditLog.WriteAsync);
@@ -45,6 +46,11 @@ public partial class MainWindow : Window
             _auditLog);
         DataContext = _viewModel;
         Loaded += MainWindow_Loaded;
+        Closing += (_, e) =>
+        {
+            if (_viewModel.IsBusy)
+            { e.Cancel = true; MessageBox.Show(this, "An operation is running. Cancel it and wait for it to finish before closing.", "Operation in progress"); }
+        };
         Closed += (_, _) =>
         {
             _publicDnsResolver.Dispose();
@@ -75,7 +81,8 @@ public partial class MainWindow : Window
 
     private async void Settings_Click(object sender, RoutedEventArgs e)
     {
-        var dialog = new SettingsWindow(_viewModel.Settings) { Owner = this };
+        if (_viewModel.IsBusy) return;
+        var dialog = new AccountProfilesWindow(_viewModel.Settings) { Owner = this };
         if (dialog.ShowDialog() != true || dialog.Result is null) return;
         await ExecuteUiAsync(async () =>
         {
@@ -84,9 +91,19 @@ public partial class MainWindow : Window
         }, "Unable to connect to DNS providers");
     }
 
+    private async void ProfileSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_viewModel is null || _ignoreProfileSelection || _viewModel.IsBusy || ProfileSelector.SelectedValue is not string id || id == _viewModel.ActiveProfileId) return;
+        await ExecuteUiAsync(() => _viewModel.SwitchProfileAsync(id), "Unable to switch profile");
+        _ignoreProfileSelection = true;
+        try { ProfileSelector.SetCurrentValue(ComboBox.SelectedValueProperty, _viewModel.ActiveProfileId); }
+        finally { _ignoreProfileSelection = false; }
+        SelectCurrentDomainInTree();
+    }
+
     private async void DomainsTree_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
     {
-        if (_ignoreTreeSelection || e.NewValue is not DomainSummary domain || domain == _viewModel.SelectedDomain) return;
+        if (_viewModel.IsBusy || _ignoreTreeSelection || e.NewValue is not DomainSummary domain || domain == _viewModel.SelectedDomain) return;
         if (_viewModel.HasPendingChanges)
         {
             var choice = MessageBox.Show(this,
@@ -99,6 +116,7 @@ public partial class MainWindow : Window
             }
         }
         await ExecuteUiAsync(() => _viewModel.SelectDomainAsync(domain), $"Unable to load {domain.Name}");
+        SelectCurrentDomainInTree();
     }
 
     private async void Refresh_Click(object sender, RoutedEventArgs e)
@@ -111,7 +129,7 @@ public partial class MainWindow : Window
 
     private void NewRecord_Click(object sender, RoutedEventArgs e)
     {
-        if (!_viewModel.HasSelectedDomain) return;
+        if (!_viewModel.CanEdit) return;
         var dialog = new RecordEditorWindow { Owner = this };
         if (dialog.ShowDialog() == true && dialog.Result is not null) _viewModel.AddRecord(dialog.Result);
     }
@@ -121,7 +139,7 @@ public partial class MainWindow : Window
 
     private void EditSelectedRecord()
     {
-        if (_viewModel.SelectedRecord is null || RecordsGrid.SelectedItems.Count != 1) return;
+        if (!_viewModel.CanEdit || _viewModel.SelectedRecord is null || _viewModel.SelectedRecord.Model.IsReadOnly || RecordsGrid.SelectedItems.Count != 1) return;
         var dialog = new RecordEditorWindow(_viewModel.SelectedRecord.Model.Clone()) { Owner = this };
         if (dialog.ShowDialog() == true && dialog.Result is not null)
             _viewModel.UpdateRecord(_viewModel.SelectedRecord, dialog.Result);
@@ -138,7 +156,8 @@ public partial class MainWindow : Window
 
     private void DeleteSelectedRecords()
     {
-        var records = RecordsGrid.SelectedItems.OfType<DnsRecordViewModel>().ToArray();
+        if (!_viewModel.CanEdit) return;
+        var records = RecordsGrid.SelectedItems.OfType<DnsRecordViewModel>().Where(r => !r.Model.IsReadOnly).ToArray();
         if (records.Length == 0) return;
 
         var prompt = records.Length == 1
@@ -154,7 +173,7 @@ public partial class MainWindow : Window
 
     private async void ApplyChanges_Click(object sender, RoutedEventArgs e)
     {
-        if (!_viewModel.HasPendingChanges) return;
+        if (!_viewModel.CanEdit || !_viewModel.HasPendingChanges) return;
         var validation = _viewModel.ValidateCurrentZone();
         if (!validation.IsValid)
         {
@@ -164,10 +183,10 @@ public partial class MainWindow : Window
         var risk = _viewModel.AnalyzeCurrentRisks();
         var riskReview = risk.HasWarnings ? $"\n\nRisk review:\n{risk.Summary}" : string.Empty;
         if (MessageBox.Show(this,
-                $"Apply {_viewModel.PendingChanges.Count} pending change{(_viewModel.PendingChanges.Count == 1 ? string.Empty : "s")} to {_viewModel.CurrentDomainName}?\n\nA pre-change snapshot will be saved first.{riskReview}",
+                $"Apply {_viewModel.PendingChanges.Count} pending change{(_viewModel.PendingChanges.Count == 1 ? string.Empty : "s")} to {_viewModel.TargetDisplay}?\n\nA pre-change snapshot will be saved first.{riskReview}",
                 "Apply complete zone", MessageBoxButton.YesNo, risk.HasWarnings ? MessageBoxImage.Warning : MessageBoxImage.Question) != MessageBoxResult.Yes) return;
         if (risk.HasCriticalRisks && MessageBox.Show(this,
-                $"This plan contains critical DNS risks for {_viewModel.CurrentDomainName}. Are you certain you want to continue?",
+                $"This plan contains critical DNS risks for {_viewModel.TargetDisplay}. Are you certain you want to continue?",
                 "Confirm critical DNS change", MessageBoxButton.YesNo, MessageBoxImage.Stop) != MessageBoxResult.Yes) return;
 
         var propagationTargets = _viewModel.SupportsPublicDnsPropagation
@@ -201,6 +220,23 @@ public partial class MainWindow : Window
         new PropagationWindow(_publicDnsResolver, [target]) { Owner = this }.Show();
     }
 
+    private void BestPractices_Click(object sender, RoutedEventArgs e)
+    {
+        if (!_viewModel.HasSelectedDomain || _viewModel.IsBusy) return;
+        var dialog = new BestPracticesWindow(_viewModel.CurrentDomainName, _viewModel.TargetDisplay, _viewModel.GetCurrentRecords(), _viewModel.IsReadOnly, _viewModel.ValidateRecords) { Owner = this };
+        if (dialog.ShowDialog() == true && dialog.Result is not null)
+            foreach (var record in dialog.Result.Where(r => !_viewModel.GetCurrentRecords().Any(old => DnsRecord.ContentEquals(old, r)))) _viewModel.AddRecord(record);
+    }
+
+    private async void RestoreDraft_Click(object sender, RoutedEventArgs e)
+    {
+        if (!_viewModel.CanEdit) return;
+        if (MessageBox.Show(this, "Stage the saved draft against the current zone? Review all resulting differences before applying.", "Restore saved draft", MessageBoxButton.YesNo) != MessageBoxResult.Yes) return;
+        await ExecuteUiAsync(() => { _viewModel.RestoreSavedDraft(); return Task.CompletedTask; }, "Unable to restore draft");
+    }
+
+    private void CancelOperation_Click(object sender, RoutedEventArgs e) => _viewModel.CancelCurrentOperation();
+
     private void ChangeLab_Click(object sender, RoutedEventArgs e)
     {
         if (_viewModel.HasPendingChanges)
@@ -209,12 +245,13 @@ public partial class MainWindow : Window
                 "Pending changes", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
+        if (_viewModel.IsBusy) return;
         new ChangeLabWindow(_changeLabService, _viewModel.GetProviderScopes(), _publicDnsResolver) { Owner = this }.ShowDialog();
     }
 
     private void ClearChanges_Click(object sender, RoutedEventArgs e)
     {
-        if (!_viewModel.HasPendingChanges) return;
+        if (!_viewModel.CanEdit || !_viewModel.HasPendingChanges) return;
         if (MessageBox.Show(this, "Discard all pending changes?", "Clear changes", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
             _viewModel.ClearChanges();
     }
@@ -304,9 +341,26 @@ public partial class MainWindow : Window
             var result = await _updateService.CheckAsync(_viewModel.Settings.Updates.ManifestUrl);
             if (result.UpdateAvailable && result.DownloadUri is not null)
             {
-                if (MessageBox.Show(this, $"{result.Message}\n\nOpen the secure download location?",
-                        "Update available", MessageBoxButton.YesNo, MessageBoxImage.Information) == MessageBoxResult.Yes)
-                    Process.Start(new ProcessStartInfo(result.DownloadUri.AbsoluteUri) { UseShellExecute = true });
+                if (MessageBox.Show(this, $"{result.Message}\n\nDownload from {result.DownloadUri.Host} and verify its checksum?",
+                        "Update available", MessageBoxButton.YesNo, MessageBoxImage.Information) != MessageBoxResult.Yes) return;
+                using var downloadTimeout = new CancellationTokenSource(TimeSpan.FromMinutes(10));
+                var directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "NSDeck", "updates");
+                var path = await _updateService.DownloadVerifiedAsync(result, directory, downloadTimeout.Token);
+                using var signatureTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(45));
+                var trusted = await AuthenticodeVerifier.VerifyAsync(path, _viewModel.Settings.Updates.TrustedSignerThumbprint, signatureTimeout.Token);
+                if (!trusted)
+                {
+                    MessageBox.Show(this, $"The checksum is verified, but a trusted publisher signature could not be verified. NSDeck will not start this file.\n\nSaved to: {path}", "Update downloaded", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
+                if (MessageBox.Show(this, "The checksum and trusted publisher signature are verified. Start the downloaded update?", "Verified update", MessageBoxButton.YesNo) == MessageBoxResult.Yes)
+                {
+                    // Recheck immediately before execution in case the file changed during the prompt.
+                    await using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+                    var hash = Convert.ToHexString(await System.Security.Cryptography.SHA256.HashDataAsync(file));
+                    if (!hash.Equals(result.Sha256, StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("The update changed after verification.");
+                    Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+                }
             }
             else if (showCurrentMessage)
             {
@@ -325,6 +379,7 @@ public partial class MainWindow : Window
     private async Task ExecuteUiAsync(Func<Task> operation, string title)
     {
         try { await operation(); }
+        catch (OperationCanceledException) { _viewModel.ReportError("Operation cancelled. Any pending draft remains saved."); }
         catch (Exception exception)
         {
             _viewModel.ReportError(exception.Message);

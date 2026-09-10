@@ -7,6 +7,7 @@ public sealed class DiagnosticAnonymizer
     private const string ProviderSeparator = " — ";
     private readonly Dictionary<string, string> _domainAliases = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _serverAliases = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _accountAliases = new(StringComparer.OrdinalIgnoreCase);
 
     public DnsAuditEntry Anonymize(DnsAuditEntry entry) => entry with
     {
@@ -20,6 +21,13 @@ public sealed class DiagnosticAnonymizer
 
     public string AnonymizeProvider(string provider)
     {
+        var accountSeparator = provider.LastIndexOf(" / ", StringComparison.Ordinal);
+        if (accountSeparator >= 0)
+        {
+            var name = provider[..accountSeparator];
+            if (!_accountAliases.TryGetValue(name, out var accountAlias)) _accountAliases[name] = accountAlias = $"account-{_accountAliases.Count + 1:000}";
+            return accountAlias + " / " + AnonymizeProvider(provider[(accountSeparator + 3)..]);
+        }
         var separator = provider.IndexOf(ProviderSeparator, StringComparison.Ordinal);
         if (separator < 0) return provider;
 

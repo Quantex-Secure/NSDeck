@@ -162,12 +162,14 @@
                     <Border Style="{StaticResource InstructionPanelStyle}"><StackPanel>
                         <TextBlock Text="Secure update notifications" FontWeight="SemiBold"/>
                         <TextBlock Style="{StaticResource InstructionTextStyle}" Text="1. Publish the generated update-manifest.json and release files at a stable HTTPS location."/>
-                        <TextBlock Style="{StaticResource InstructionTextStyle}" Text="2. Enter the manifest's HTTPS address below. The application only checks versions and opens the download page after your confirmation."/>
-                        <TextBlock Style="{StaticResource InstructionTextStyle}" Text="3. Automatic installation remains disabled until releases are Authenticode-signed; this prevents an unsigned remote file from silently replacing the application."/>
+                        <TextBlock Style="{StaticResource InstructionTextStyle}" Text="2. Enter the manifest's HTTPS address below. NSDeck downloads only after confirmation and verifies the SHA-256 checksum."/>
+                        <TextBlock Style="{StaticResource InstructionTextStyle}" Text="3. Starting a downloaded update requires a valid Authenticode signature matching your trusted publisher thumbprint. Silent installation is disabled."/>
                     </StackPanel></Border>
                     <CheckBox x:Name="UpdatesAutomatic" Content="Check automatically when the application starts" FontWeight="SemiBold" Margin="0,0,0,16"/>
                     <TextBlock Text="HTTPS update manifest address"/>
                     <TextBox x:Name="UpdateManifestUrl" Margin="0,5,0,12"/>
+                    <TextBlock Text="Trusted publisher certificate thumbprint (obtain independently from Quantex Secure)" TextWrapping="Wrap"/>
+                    <TextBox x:Name="TrustedSignerThumbprint" Margin="0,5,0,12"/>
                     <TextBlock TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" Text="Example: https://downloads.example.com/nsdeck/update-manifest.json"/>
                 </StackPanel></ScrollViewer>
             </TabItem>

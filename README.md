@@ -6,7 +6,11 @@
 
 **Every zone. One deck.**
 
-**A Quantex Secure product.**
+**A Quantex Secure product. Free and open source under Apache 2.0.**
+
+**[Download the Windows preview](https://github.com/Quantex-Secure/NSDeck/releases)** · [Scanner and guided setup](docs/BEST_PRACTICES.md) · [0.7 release notes](docs/RELEASE_NOTES_0.7.md)
+
+Choose the per-user installer or portable ZIP. Windows 11 x64 is the tested desktop platform; the .NET runtime is included. Preview binaries are unsigned. See the release notes for checksum verification.
 
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 ![Platform: Windows](https://img.shields.io/badge/platform-Windows-0078D4)
@@ -30,7 +34,12 @@ PowerDNS is intentionally not included yet.
 
 ## Current features
 
-- Loads public zones from every enabled provider into one account tree.
+- Organizes connections into named customer/environment profiles, including read-only accounts.
+- Identifies zones by account and provider zone ID, including same-name public/private Route 53 zones.
+- Scans loaded records for DNS and email-authentication issues, explains findings with source links, and guides record setup.
+- Previews and stages website, MX, SPF, DMARC monitoring, provider-issued DKIM, CAA, and explicitly confirmed no-mail records.
+- Saves encrypted drafts as you edit and restores them for the matching account and zone.
+- Loads zones from every enabled provider into one account tree.
 - Shows only Namecheap domains whose zones are hosted by Namecheap BasicDNS or PremiumDNS; externally delegated registrations remain hidden from the Namecheap node.
 - Provides an in-app setup checklist and official documentation link on every provider tab.
 - Reads and edits common A, AAAA, CAA, CNAME, MX, NS delegation, PTR, SRV, and TXT records.
@@ -38,9 +47,9 @@ PowerDNS is intentionally not included yet.
 - Filters records by text and record type.
 - Supports Ctrl-click and Shift-click multi-selection so several records can be staged for deletion together.
 - Stages add, edit, and delete operations locally.
-- Searches records globally across every configured provider and zone in the DNS Change Lab.
+- Searches records globally across every configured provider and zone in the active profile through DNS Change Lab.
 - Builds coordinated multi-zone find-and-replace plans with dependency and shared-value analysis.
-- Snapshots every affected zone, applies the plan, verifies each provider, and rolls completed zones back if the transaction fails.
+- Snapshots affected zones, applies and verifies each provider, and inspects attempted writes after failures. Recovery preserves unrelated changes and stops for conflicting or ambiguous record sets.
 - Reviews dangerous MX, apex, SPF, DKIM, DMARC, CAA, NS, and bulk-deletion changes before applying.
 - Re-reads the provider before applying and stops if something else changed the zone.
 - Saves a DPAPI-protected provider configuration and a local pre-change zone snapshot.
@@ -48,15 +57,15 @@ PowerDNS is intentionally not included yet.
 - Uses Azure DNS record-set ETags to block last-moment concurrent overwrites.
 - Checks expected records through Cloudflare and Google public resolvers with an auto-refreshing propagation radar.
 - Writes credential-free local JSON audit logs and exports public-safe diagnostic ZIP reports with zone names, Windows server names, fingerprints, and provider details anonymized.
-- Supports automatic HTTPS update checks with user-confirmed downloads; silent installation stays disabled until releases are signed.
+- Supports HTTPS update checks and user-confirmed downloads with SHA-256 verification. Starting a downloaded update requires a valid, pinned Authenticode publisher signature; silent installation is disabled.
 - Exports, imports, and stages JSON zone snapshots.
 - Uses safe sample data when no provider is enabled.
 
-Provider-managed apex SOA and NS records are intentionally hidden from the editable record grid. Route 53 alias and policy-based records and Google routing-policy record sets are left untouched by the basic record editor.
+Provider-managed and unsupported records are displayed read-only where returned by the provider. Route 53 aliases and policy records, Google routing-policy records, and Azure aliases remain managed through their provider consoles.
 
 ## Running
 
-Download the latest Windows package from the repository's **Releases** page once binary releases are published. Verify the accompanying SHA-256 checksum before running it. Until Quantex Secure publishes Authenticode-signed builds, Windows may display an unknown-publisher warning.
+Download a Windows preview package from the repository's [Releases page](https://github.com/Quantex-Secure/NSDeck/releases). Verify the accompanying SHA-256 checksum before running it. Until Quantex Secure publishes Authenticode-signed builds, Windows may display an unknown-publisher warning.
 
 To run from source:
 
@@ -68,7 +77,9 @@ The solution targets `net10.0-windows` and builds with the .NET 10 SDK.
 
 ## Connecting providers
 
-Open **File → DNS Provider Accounts** and enable any combination of providers.
+Open **File → DNS Provider Accounts**, add or select a named profile, choose its read-only/editing mode, and click **Configure providers**. Enable any combination of providers within the profile.
+
+Switch profiles using the dropdown beside **Accounts**, or select a profile in the settings window and choose **Save and connect**. Only the active profile's providers and zones load, including in Change Lab. NSDeck remembers the selection after restart. An empty profile shows setup guidance; configure its providers to load zones. Existing staged drafts remain saved for their original account and zone.
 
 - **Namecheap:** API user, username, API key, and whitelisted public IPv4 address.
 - **Azure DNS:** subscription ID. Use an existing Azure CLI, Visual Studio, or environment sign-in, or provide a tenant ID, application ID, and client secret.
@@ -78,7 +89,7 @@ Open **File → DNS Provider Accounts** and enable any combination of providers.
 - **Google Cloud DNS:** project ID plus a service-account JSON file, or Application Default Credentials.
 - **Windows DNS:** one or more DNS server names and the default `NSDeck.Dns` JEA endpoint. The Windows DNS tab exports the one-time server setup script and tests the constrained connection using the current Windows account.
 
-All provider configuration—including identifiers and secrets—is serialized into one payload encrypted with Windows DPAPI. It can be decrypted only by the same Windows account on the same computer.
+All profiles and provider configuration—including identifiers and secrets—are serialized into one payload encrypted with Windows DPAPI. It can be decrypted only by the same Windows account on the same computer.
 
 When NSDeck starts for the first time, it copies existing settings, snapshots, and audit logs from the former `%LOCALAPPDATA%\DomainDnsManager` folder into `%LOCALAPPDATA%\NSDeck`. The original folder is retained as a rollback copy. A saved legacy Windows DNS endpoint name is upgraded to `NSDeck.Dns` in memory.
 
@@ -96,7 +107,7 @@ Every save follows the same guarded workflow:
 
 Namecheap and GoDaddy use complete editable-record replacement. Azure, Cloudflare, Route 53, and Google Cloud DNS use record-set or record-level changes. Provider-managed and advanced routing records are not deleted by this process.
 
-Windows DNS reads and reconciles A, AAAA, CNAME, MX, NS, PTR, SRV, and TXT records through three purpose-built JEA functions. SOA, DNSSEC, CAA, and other record types remain untouched and are not exposed for editing by this provider.
+Windows DNS reconciles A, AAAA, CNAME, MX, delegation NS, PTR, SRV, and TXT records through three purpose-built JEA functions. The updated endpoint displays SOA, apex NS, DNSSEC, CAA, and unsupported record types read-only. Reinstall the bundled JEA setup script to enable that expanded display.
 
 ## Windows DNS least-privilege setup
 
@@ -132,9 +143,17 @@ Open **Action → DNS Change Lab** to build one guarded change across multiple p
 4. Enter the text to find and its replacement, then add the selected records to the coordinated plan.
 5. Review the complete before/after table and apply it.
 
-The Change Lab re-reads every affected zone before writing anything. If all preflight checks pass, it saves every snapshot, applies and verifies the zones sequentially, and restores already-written zones in reverse order if a later provider fails. After a successful transaction, the propagation radar opens with every changed record.
+The Change Lab re-reads every affected zone before writing anything. If preflight checks pass, it saves every snapshot, applies and verifies zones sequentially, and inspects attempted writes in reverse order after a failure. It restores touched record sets only when their current state can be matched safely to the plan; unrelated administrator changes survive. Ambiguous partial writes and conflicting edits require manual review. Providers without native conditional writes retain a final read/write race window. These coordinated changes are not distributed ACID transactions. After a successful transaction, the propagation radar opens with every changed record.
 
 Public resolver results are informational. Cloudflare or Google can continue returning a cached prior value until that value's old TTL expires even though the authoritative provider has already verified the update.
+
+## Drafts and recovery
+
+Edits are saved as DPAPI-encrypted drafts beneath `%LOCALAPPDATA%\NSDeck\drafts`. Matching drafts restore when you reopen their zone. If the zone changed, **Action → Restore Saved Draft** stages the saved desired state for explicit review. **Clear All** discards the current draft.
+
+New snapshot history is scoped by profile, provider account, and zone ID. Legacy unscoped snapshots remain on disk and can be imported explicitly. Snapshots from another identified account/zone are rejected by normal restore.
+
+Use **Cancel operation** for long reads or coordinated operations. During an apply, cancellation can occur after a provider accepted a write; wait for recovery results before closing or retrying.
 
 ## Tests
 
@@ -160,7 +179,7 @@ Do not report vulnerabilities or expose production DNS data in public issues. Fo
 
 Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request and follow the [Code of Conduct](CODE_OF_CONDUCT.md). Tests and examples must use reserved domains, addresses, and sanitized provider data.
 
-Release history is maintained in [CHANGELOG.md](CHANGELOG.md). Maintainers preparing the first public repository should follow [docs/GITHUB_SETUP.md](docs/GITHUB_SETUP.md).
+Release history is maintained in [CHANGELOG.md](CHANGELOG.md). Maintainers preparing releases should follow [docs/RELEASE.md](docs/RELEASE.md).
 
 ## License
 
@@ -173,7 +192,7 @@ Copyright © 2026 Quantex Secure. NSDeck is licensed under [Apache License 2.0](
 - Cloudflare proxy state is preserved when existing records are patched; newly created records default to DNS-only.
 - Advanced Route 53 aliases/routing policies and Google routing-policy records remain untouched and require their provider consoles.
 - DNSSEC configuration and registrar nameserver changes are outside the record editor.
-- Silent update installation remains disabled until a trusted code-signing certificate is configured; HTTPS version checks and user-confirmed downloads are supported.
+- Silent installation is disabled. The updater verifies hashes, and only offers to start a download if its signature matches the independently configured trusted publisher certificate.
 
 ## Project layout
 

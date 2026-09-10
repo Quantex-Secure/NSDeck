@@ -15,7 +15,7 @@
                 <TextBlock Text="DNS Change Lab" FontSize="26" FontWeight="SemiBold"/>
                 <TextBlock Text="Search every provider, understand the blast radius, and deploy one guarded multi-zone transaction." Margin="0,6,0,0" Foreground="{StaticResource MutedTextBrush}"/>
             </StackPanel>
-            <Button Grid.Column="1" Content="Refresh Global Inventory" MinWidth="176" Style="{StaticResource PrimaryButtonStyle}" Click="RefreshInventory_Click"/>
+            <StackPanel Grid.Column="1" Orientation="Horizontal"><Button Content="Cancel operation" Click="CancelOperation_Click" Margin="0,0,10,0"/><Button Content="Refresh Global Inventory" MinWidth="176" Style="{StaticResource PrimaryButtonStyle}" Click="RefreshInventory_Click"/></StackPanel>
         </Grid>
 
         <Grid Grid.Row="1" Margin="0,18,0,12">
@@ -29,7 +29,7 @@
             <DataGrid x:Name="InventoryGrid" Grid.Column="0" IsReadOnly="True" SelectionMode="Extended" SelectionUnit="FullRow" SelectionChanged="InventoryGrid_SelectionChanged">
                 <DataGrid.Columns>
                     <DataGridTextColumn Header="Provider" Binding="{Binding Provider}" Width="130"/>
-                    <DataGridTextColumn Header="Domain" Binding="{Binding Domain}" Width="190"/>
+                    <DataGridTextColumn Header="Domain" Binding="{Binding Target}" Width="190"/>
                     <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="170"/>
                     <DataGridTextColumn Header="Type" Binding="{Binding Type}" Width="75"/>
                     <DataGridTextColumn Header="Value" Binding="{Binding Value}" Width="*" MinWidth="240"/>
@@ -71,7 +71,7 @@
             <DataGrid x:Name="PlanGrid" Grid.Row="1" IsReadOnly="True" SelectionMode="Extended">
                 <DataGrid.Columns>
                     <DataGridTextColumn Header="Provider" Binding="{Binding Provider}" Width="130"/>
-                    <DataGridTextColumn Header="Domain" Binding="{Binding Domain}" Width="180"/>
+                    <DataGridTextColumn Header="Domain" Binding="{Binding Target}" Width="180"/>
                     <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="150"/>
                     <DataGridTextColumn Header="Type" Binding="{Binding Type}" Width="70"/>
                     <DataGridTextColumn Header="Before" Binding="{Binding Before}" Width="*" MinWidth="220"/>

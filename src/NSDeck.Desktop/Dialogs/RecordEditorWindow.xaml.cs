@@ -14,17 +14,12 @@ public partial class RecordEditorWindow : Window
         InitializeComponent();
         _source = source;
         TypeBox.ItemsSource = DnsRecordTypes.All;
-        TtlBox.ItemsSource = new[]
-        {
-            new TtlOption("1 minute", 60), new TtlOption("5 minutes", 300),
-            new TtlOption("20 minutes", 1200), new TtlOption("30 minutes", 1800),
-            new TtlOption("60 minutes", 3600)
-        };
+        TtlBox.ItemsSource = new[] { 1, 60, 300, 600, 1200, 1800, 3600, 86400 };
 
         if (source is null)
         {
             TypeBox.SelectedItem = "A";
-            TtlBox.SelectedValue = 1800;
+            TtlBox.Text = "1800";
             NameBox.Text = "@";
         }
         else
@@ -34,7 +29,7 @@ public partial class RecordEditorWindow : Window
             NameBox.Text = source.Name;
             TypeBox.SelectedItem = source.Type;
             ValueBox.Text = source.Value;
-            TtlBox.SelectedValue = source.TtlSeconds;
+            TtlBox.Text = source.TtlSeconds.ToString();
             PriorityBox.Text = source.Priority?.ToString() ?? string.Empty;
         }
         UpdatePriorityState();
@@ -47,7 +42,7 @@ public partial class RecordEditorWindow : Window
         var name = NameBox.Text.Trim();
         var type = TypeBox.SelectedItem as string;
         var value = ValueBox.Text.Trim();
-        var ttl = TtlBox.SelectedValue is int seconds ? seconds : 1800;
+        if (!int.TryParse(TtlBox.Text, out var ttl) || ttl <= 0) { MessageBox.Show(this, "Enter a positive TTL in seconds."); return; }
         int? priority = null;
         if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(type) || string.IsNullOrWhiteSpace(value))
         {
@@ -65,7 +60,7 @@ public partial class RecordEditorWindow : Window
         }
         Result = new DnsRecord
         {
-            LocalId = _source?.LocalId ?? Guid.NewGuid(), ProviderRecordId = _source?.ProviderRecordId,
+            LocalId = _source?.LocalId ?? Guid.NewGuid(), ProviderRecordId = _source?.ProviderRecordId, ProviderMetadata = _source?.ProviderMetadata,
             Name = name, Type = type, Value = value, TtlSeconds = ttl, Priority = priority
         };
         DialogResult = true;

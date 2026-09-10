@@ -1,0 +1,54 @@
+name: Package preview release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag to package (for example v0.7.0-preview.1)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag }}
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+      - name: Validate release tag
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          if ($env:RELEASE_TAG -notmatch '^v\d+\.\d+\.\d+(-preview\.\d+)?$') { throw 'Invalid release tag' }
+          $version = ([xml](Get-Content src/NSDeck.Desktop/NSDeck.Desktop.csproj)).Project.PropertyGroup.Version | Select-Object -First 1
+          if ($env:RELEASE_TAG -notmatch ('^v' + [regex]::Escape($version) + '(-preview\.\d+)?$')) { throw 'Tag and project version differ' }
+      - name: Build and verify preview artifacts
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          $inno = 'C:\Program Files (x86)\Inno Setup 6'
+          if (Test-Path "$inno\ISCC.exe") { $env:PATH = "$inno;$env:PATH" }
+          ./build-release.ps1 -ReleaseBaseUri "https://github.com/Quantex-Secure/NSDeck/releases/download/$env:RELEASE_TAG"
+      - name: Upload reviewable artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nsdeck-preview
+          path: |
+            release/NSDeck-*.exe
+            release/NSDeck-*-win-x64.zip
+            release/NSDeck-*-SHA256.txt
+            release/update-manifest.json
+          if-no-files-found: error
+
+# This workflow creates reviewable build artifacts. A maintainer publishes the
+# GitHub preview after checking its hashes and release notes. Signing credentials
+# belong in a separately configured protected release environment.
