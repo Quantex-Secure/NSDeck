@@ -22,7 +22,7 @@ public sealed class AccountProfilesWindow : Window
         _profiles = new(settings.Profiles.Count > 0 ? settings.Profiles : [new AccountProfile { Id = "legacy", Name = "Default", Connections = settings }]);
         var panel = new StackPanel { Margin = new Thickness(24) }; Content = panel;
         panel.Children.Add(new TextBlock { Text = "Account profiles", FontSize = 24, FontWeight = FontWeights.SemiBold });
-        panel.Children.Add(new TextBlock { Text = "Keep each customer or environment in a named profile. Credentials are encrypted for this Windows account.", TextWrapping = TextWrapping.Wrap });
+        panel.Children.Add(new TextBlock { Text = "Select a profile and choose Save and connect to switch to it. Only that profile's providers will load. Credentials are encrypted for this Windows account.", TextWrapping = TextWrapping.Wrap });
         _list.ItemsSource = _profiles; panel.Children.Add(_list);
         panel.Children.Add(new TextBlock { Text = "Profile name" }); panel.Children.Add(_name); panel.Children.Add(_readOnly);
         _list.SelectionChanged += (_, _) => { if (_list.SelectedItem is AccountProfile p) { _name.Text = p.Name; _readOnly.IsChecked = p.ReadOnly; } };
@@ -47,10 +47,10 @@ public sealed class AccountProfilesWindow : Window
             SaveLabel();
             if (_profiles.Select(p => p.Name).Distinct(StringComparer.OrdinalIgnoreCase).Count() != _profiles.Count)
             { MessageBox.Show(this, "Use a different name for each profile."); return; }
-            Result = new AppSettings { Profiles = _profiles.ToList(), Updates = _updates }; DialogResult = true;
+            Result = new AppSettings { Profiles = _profiles.ToList(), ActiveProfileId = (_list.SelectedItem as AccountProfile)?.Id ?? _profiles.FirstOrDefault()?.Id, Updates = _updates }; DialogResult = true;
         });
         AddButton(footer, "Cancel", () => DialogResult = false);
-        _list.SelectedIndex = 0;
+        _list.SelectedItem = _profiles.FirstOrDefault(p => p.Id == settings.ActiveProfile?.Id) ?? _profiles.FirstOrDefault();
     }
 
     private void SaveLabel()

@@ -58,6 +58,38 @@ public sealed class DesktopSafetyTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending); Assert.False(vm.IsBusy); Assert.Equal(one, vm.SelectedDomain);
     });
 
+    [Fact]
+    public Task Selecting_an_empty_profile_does_not_connect_default_or_load_demo_and_survives_restart() => Sta(async directory =>
+    {
+        var settings = new AppSettings
+        {
+            ActiveProfileId = "second",
+            Profiles = [new() { Id = "default", Name = "Default", Connections = new() { Cloudflare = new() { Enabled = true, Token = "" } } }, new() { Id = "second", Name = "Second" }]
+        };
+        using (var vm = Create(directory))
+        {
+            // Constructing the inactive provider would throw for its empty token.
+            await vm.ConfigureAsync(settings);
+            Assert.Equal("second", vm.ActiveProfileId); Assert.Equal("Second", vm.ProviderDisplay);
+            Assert.Empty(vm.Accounts); Assert.Empty(vm.Domains); Assert.False(vm.IsDemoMode);
+            Assert.Contains("Second has no enabled providers", vm.StatusMessage);
+        }
+        using var reopened = Create(directory); await reopened.InitializeAsync();
+        Assert.Equal("second", reopened.ActiveProfileId); Assert.Empty(reopened.Accounts); Assert.False(reopened.IsDemoMode);
+    });
+
+    [Fact]
+    public Task Switching_profiles_persists_selection_and_preserves_all_saved_profiles() => Sta(async directory =>
+    {
+        using var vm = Create(directory);
+        await vm.ConfigureAsync(new AppSettings { ActiveProfileId = "one", Profiles = [new() { Id = "one", Name = "One" }, new() { Id = "two", Name = "Two" }] });
+        await vm.SwitchProfileAsync("two");
+        Assert.Equal("two", vm.ActiveProfileId); Assert.Contains("Two", vm.ConnectionStatus);
+        var saved = await new SettingsStore(directory).LoadAsync();
+        Assert.Equal("two", saved.ActiveProfileId); Assert.Equal(2, saved.Profiles.Count);
+        await vm.SwitchProfileAsync("one"); Assert.Equal("one", vm.ActiveProfileId);
+    });
+
     private static MainViewModel Create(string directory) => new(new SettingsStore(directory), new JsonZoneSnapshotStore(Path.Combine(directory, "snapshots")), new AuditLogService(directory));
     private static Task Sta(Func<string, Task> action)
     {

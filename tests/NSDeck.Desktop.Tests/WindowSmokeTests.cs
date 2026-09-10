@@ -8,6 +8,8 @@ using System.Windows.Threading;
 using NSDeck.Core.Models;
 using NSDeck.Core.Services;
 using NSDeck.Desktop.Dialogs;
+using NSDeck.Desktop.Services;
+using NSDeck.Desktop.ViewModels;
 
 namespace NSDeck.Desktop.Tests;
 
@@ -21,6 +23,7 @@ public sealed class WindowSmokeTests
         {
             try
             {
+                SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext(Dispatcher.CurrentDispatcher));
                 var app = new NSDeck.Desktop.App { ShutdownMode = ShutdownMode.OnExplicitShutdown }; app.InitializeComponent();
                 var records = new DnsRecord[] { new() { Name = "@", Type = "A", Value = "192.0.2.1", TtlSeconds = 600 } };
                 var scanner = new BestPracticesWindow("example.com", "Demo / example.com", records, false, r => ZoneValidator.Validate(r));
@@ -52,10 +55,27 @@ public sealed class WindowSmokeTests
                 editor.ShowDialog(); Assert.Equal(600, editor.Result!.TtlSeconds);
                 var main = new NSDeck.Desktop.MainWindow(designPreview: true);
                 main.Show(); main.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+                var profileSettings = new AppSettings { ActiveProfileId = "default", Profiles = [new() { Id = "default", Name = "Default" }, new() { Id = "test", Name = "Test profile" }] };
+                var accounts = new AccountProfilesWindow(profileSettings);
+                accounts.Loaded += (_, _) => accounts.Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    Field<ListBox>(accounts, "_list").SelectedIndex = 1;
+                    Descendants(accounts).OfType<Button>().Single(b => Equals(b.Content, "Save and connect")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                }));
+                accounts.ShowDialog(); Assert.Equal("test", accounts.Result!.ActiveProfileId);
+                var reopened = new AccountProfilesWindow(accounts.Result);
+                reopened.Show(); Assert.Equal("test", ((AccountProfile)Field<ListBox>(reopened, "_list").SelectedItem).Id); reopened.Close();
+                var vm = (MainViewModel)main.DataContext;
+                Pump(vm.ConfigureAsync(accounts.Result));
+                var selector = (ComboBox)main.FindName("ProfileSelector");
+                Assert.Equal("test", selector.SelectedValue);
+                selector.SelectedValue = "default";
+                Pump(WaitForIdle(vm));
+                Assert.Equal("default", vm.ActiveProfileId); Assert.False(vm.IsDemoMode);
+                selector.SelectedValue = "test";
+                Pump(WaitForIdle(vm));
+                Assert.Equal("test", vm.ActiveProfileId);
                 Capture(main, "main-window.png"); main.Close();
-                var accounts = new AccountProfilesWindow(new NSDeck.Desktop.Services.AppSettings());
-                accounts.Show(); accounts.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
-                Capture(accounts, "account-profiles.png"); accounts.Close();
                 app.Shutdown(); completion.TrySetResult();
             }
             catch (Exception ex) { completion.TrySetException(ex); }
@@ -63,6 +83,18 @@ public sealed class WindowSmokeTests
         thread.SetApartmentState(ApartmentState.STA); thread.Start(); return completion.Task;
     }
     private static T Field<T>(object owner, string name) => (T)owner.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(owner)!;
+    private static void Pump(Task task)
+    {
+        var dispatcher = Dispatcher.CurrentDispatcher;
+        var frame = new DispatcherFrame();
+        _ = task.ContinueWith(_ => dispatcher.BeginInvoke(new Action(() => frame.Continue = false)));
+        Dispatcher.PushFrame(frame); task.GetAwaiter().GetResult();
+    }
+    private static async Task WaitForIdle(MainViewModel vm)
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        while (vm.IsBusy) await Task.Delay(10, deadline.Token);
+    }
     private static IEnumerable<DependencyObject> Descendants(DependencyObject owner)
     {
         for (var index = 0; index < VisualTreeHelper.GetChildrenCount(owner); index++)

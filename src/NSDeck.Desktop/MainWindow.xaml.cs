@@ -24,6 +24,7 @@ public partial class MainWindow : Window
     private readonly bool _designPreview;
     private readonly bool _changeLabPreview;
     private bool _ignoreTreeSelection;
+    private bool _ignoreProfileSelection;
 
     public MainWindow(bool designPreview = false, bool changeLabPreview = false)
     {
@@ -88,6 +89,16 @@ public partial class MainWindow : Window
             await _viewModel.ConfigureAsync(dialog.Result);
             SelectCurrentDomainInTree();
         }, "Unable to connect to DNS providers");
+    }
+
+    private async void ProfileSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_viewModel is null || _ignoreProfileSelection || _viewModel.IsBusy || ProfileSelector.SelectedValue is not string id || id == _viewModel.ActiveProfileId) return;
+        await ExecuteUiAsync(() => _viewModel.SwitchProfileAsync(id), "Unable to switch profile");
+        _ignoreProfileSelection = true;
+        try { ProfileSelector.SetCurrentValue(ComboBox.SelectedValueProperty, _viewModel.ActiveProfileId); }
+        finally { _ignoreProfileSelection = false; }
+        SelectCurrentDomainInTree();
     }
 
     private async void DomainsTree_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)

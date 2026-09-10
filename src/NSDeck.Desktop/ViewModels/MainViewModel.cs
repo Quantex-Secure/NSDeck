@@ -71,6 +71,24 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public IReadOnlyList<string> RecordTypes { get; } = ["All", .. DnsRecordTypes.All];
 
     public AppSettings Settings => _settings;
+    public IReadOnlyList<AccountProfile> Profiles => _settings.Profiles.Count > 0 ? _settings.Profiles : [new AccountProfile { Id = "legacy", Name = "Default" }];
+    public string ActiveProfileId => _settings.ActiveProfile?.Id ?? "legacy";
+
+    public Task SwitchProfileAsync(string profileId, CancellationToken cancellationToken = default)
+    {
+        if (profileId == ActiveProfileId) return Task.CompletedTask;
+        if (!_settings.Profiles.Any(p => p.Id == profileId)) throw new InvalidOperationException("The selected profile is no longer available.");
+        return ConfigureAsync(new AppSettings { Profiles = _settings.Profiles, ActiveProfileId = profileId, Updates = _settings.Updates }, cancellationToken);
+    }
+
+    private void NotifyProfileSettings()
+    {
+        OnPropertyChanged(nameof(Settings));
+        OnPropertyChanged(nameof(Profiles));
+        OnPropertyChanged(nameof(ActiveProfileId));
+        OnPropertyChanged(nameof(ProviderDisplay));
+        OnPropertyChanged(nameof(TargetDisplay));
+    }
 
     public DomainSummary? SelectedDomain
     {
@@ -124,7 +142,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public bool HasPendingChanges => PendingChanges.Count > 0;
     public string PendingChangesText => $"Pending Changes ({PendingChanges.Count})";
     public string CurrentDomainName => SelectedDomain?.Name ?? "Select a domain";
-    public string ProviderDisplay => _provider.ProviderName;
+    public string ProviderDisplay => !IsDemoMode && _providers.Count == 0 && _settings.ActiveProfile is { } profile ? profile.Name : _provider.ProviderName;
     public string RecordCountText => $"{Records.Count} record{(Records.Count == 1 ? string.Empty : "s")}";
 
     public string StatusMessage
@@ -182,6 +200,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
         _settings = await _settingsStore.LoadAsync(cancellationToken);
+        NotifyProfileSettings();
         await SetConfiguredProvidersAsync(_settings, cancellationToken);
         await LoadDomainsAsync(cancellationToken);
     }
@@ -193,7 +212,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             await SetConfiguredProvidersAsync(settings, ct);
             await _settingsStore.SaveAsync(settings, ct);
             _settings = settings;
-            OnPropertyChanged(nameof(Settings));
+            NotifyProfileSettings();
             await LoadDomainsCoreAsync(ct);
         }, cancellationToken);
     }
@@ -232,7 +251,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             }
         }
 
-        ConnectionStatus = IsDemoMode ? "Demo mode — configure providers" : $"{_providers.Count} provider{(_providers.Count == 1 ? string.Empty : "s")} configured";
+        ConnectionStatus = IsDemoMode ? "Demo mode — configure providers" : $"{_settings.ActiveProfile?.Name ?? "Default"} — {_providers.Count} provider{(_providers.Count == 1 ? string.Empty : "s")} configured";
         OnPropertyChanged(nameof(IsDemoMode));
         OnPropertyChanged(nameof(ProviderDisplay));
 
@@ -247,7 +266,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             Records.Clear();
             _originalRecords = [];
             RefreshChanges();
-            StatusMessage = errors.Count == 0 ? "No domains were returned by the configured providers." : string.Join(" | ", errors);
+            StatusMessage = errors.Count > 0 ? string.Join(" | ", errors)
+                : _providers.Count == 0 && _settings.ActiveProfile is { } profile
+                    ? $"{profile.Name} has no enabled providers. Open File → DNS Provider Accounts, select this profile, and choose Configure providers."
+                    : "No domains were returned by the configured providers.";
         }
     }
 
@@ -606,7 +628,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private async Task SetConfiguredProvidersAsync(AppSettings settings, CancellationToken cancellationToken)
     {
         var next = new List<IDnsProvider>();
-        var profiles = settings.Profiles.Count > 0 ? settings.Profiles : [new AccountProfile { Id = "legacy", Name = "Default", Connections = settings }];
+        AccountProfile[] profiles = [settings.ActiveProfile ?? new AccountProfile { Id = "legacy", Name = "Default", Connections = settings }];
         try
         {
             foreach (var profile in profiles)
@@ -626,12 +648,14 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
         catch { foreach (var p in next.OfType<IDisposable>()) p.Dispose(); throw; }
         DisposeProviders();
-        _demoMode = next.Count == 0;
+        _demoMode = next.Count == 0 && settings.Profiles.Count == 0;
         _providers.AddRange(next);
         if (_demoMode) _providers.Add(new DemoDnsProvider());
         SelectedDomain = null;
         SetRecords([]);
-        ActivateProvider(_providers[0]);
+        _lastRefreshed = null;
+        OnPropertyChanged(nameof(LastRefreshedText));
+        ActivateProvider(_providers.FirstOrDefault() ?? new DemoDnsProvider());
     }
 
     public void RestoreSavedDraft()

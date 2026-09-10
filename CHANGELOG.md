@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.1 preview — 2026-09-10
+
+- Added a profile dropdown beside Accounts for immediate switching.
+- Fixed Save and connect to activate the selected profile and remember it after restart.
+- Limited provider connections and Change Lab inventory to the active profile.
+- Empty profiles show setup guidance without falling back to Default or demo zones.
+
+See [the profile-switching release notes](docs/RELEASE_NOTES_0.7.1.md).
+
 ## 0.7.0 preview — 2026-09-10
 
 - Added the local best-practice scanner and guided record templates.

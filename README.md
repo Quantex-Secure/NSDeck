@@ -47,7 +47,7 @@ PowerDNS is intentionally not included yet.
 - Filters records by text and record type.
 - Supports Ctrl-click and Shift-click multi-selection so several records can be staged for deletion together.
 - Stages add, edit, and delete operations locally.
-- Searches records globally across every configured provider and zone in the DNS Change Lab.
+- Searches records globally across every configured provider and zone in the active profile through DNS Change Lab.
 - Builds coordinated multi-zone find-and-replace plans with dependency and shared-value analysis.
 - Snapshots affected zones, applies and verifies each provider, and inspects attempted writes after failures. Recovery preserves unrelated changes and stops for conflicting or ambiguous record sets.
 - Reviews dangerous MX, apex, SPF, DKIM, DMARC, CAA, NS, and bulk-deletion changes before applying.
@@ -78,6 +78,8 @@ The solution targets `net10.0-windows` and builds with the .NET 10 SDK.
 ## Connecting providers
 
 Open **File → DNS Provider Accounts**, add or select a named profile, choose its read-only/editing mode, and click **Configure providers**. Enable any combination of providers within the profile.
+
+Switch profiles using the dropdown beside **Accounts**, or select a profile in the settings window and choose **Save and connect**. Only the active profile's providers and zones load, including in Change Lab. NSDeck remembers the selection after restart. An empty profile shows setup guidance; configure its providers to load zones. Existing staged drafts remain saved for their original account and zone.
 
 - **Namecheap:** API user, username, API key, and whitelisted public IPv4 address.
 - **Azure DNS:** subscription ID. Use an existing Azure CLI, Visual Studio, or environment sign-in, or provide a tenant ID, application ID, and client secret.

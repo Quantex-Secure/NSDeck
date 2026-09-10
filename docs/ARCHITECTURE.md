@@ -25,7 +25,7 @@ IDnsProvider
         +-- WindowsDnsProvider
 ```
 
-The view model owns all configured provider instances, loads their zones independently, and selects the correct provider when a domain is opened. A failure in one account does not prevent successfully loaded providers from appearing.
+The view model owns the active profile's configured provider instances, loads their zones independently, and selects the correct provider when a domain is opened. A failure in one account does not prevent successfully loaded providers from appearing.
 
 ## Consistency model
 
@@ -56,7 +56,7 @@ Each configured Windows DNS connection owns a hidden Windows PowerShell 5.1 work
 
 ## DNS Change Lab
 
-The Change Lab reads an editable inventory from every configured provider. A bulk replacement plan retains its source-zone fingerprint and is preflighted again before any writes occur. All affected zones are snapshotted before the transaction begins. Writes are marked attempted before invoking the provider and verified sequentially. After a failure, attempted zones are re-read in reverse order. Recovery restores changed record sets only when their state matches the original or intended plan, preserves unrelated changes, and stops on ambiguous/conflicting sets. Recovery writes repeat the baseline check and use a bounded cancellation deadline.
+The Change Lab reads an editable inventory from every configured provider in the active profile. A bulk replacement plan retains its source-zone fingerprint and is preflighted again before any writes occur. All affected zones are snapshotted before the transaction begins. Writes are marked attempted before invoking the provider and verified sequentially. After a failure, attempted zones are re-read in reverse order. Recovery restores changed record sets only when their state matches the original or intended plan, preserves unrelated changes, and stops on ambiguous/conflicting sets. Recovery writes repeat the baseline check and use a bounded cancellation deadline.
 
 Dependency analysis recognizes CNAME, MX, NS, PTR, SRV, and SPF include/redirect relationships, plus records that share the same value. Public propagation checks are deliberately informational: Cloudflare and Google recursive resolver caches may lag a successfully verified authoritative-provider update until the prior TTL expires.
 
@@ -65,6 +65,8 @@ Dependency analysis recognizes CNAME, MX, NS, PTR, SRV, and SPF include/redirect
 Append-only JSON audit logs are written beneath `%LOCALAPPDATA%\NSDeck\logs`. They contain operation metadata and fingerprints, not provider credentials. Those local logs can contain zone and Windows DNS server names. The shareable diagnostic ZIP rewrites them with per-export aliases and removes fingerprints and provider error details before packaging them with a sanitized environment summary.
 
 ## Target identity, profiles, and drafts
+
+`AppSettings.ActiveProfileId` persists the profile selected in the Accounts dropdown or the account dialog. An empty active profile loads no provider and no demo records. Older profile lists without a saved selection initially use their first profile.
 
 `AccountDnsProvider` enforces read-only access and carries the profile plus provider-account identity. `ZoneTargetProvider` binds a selected `DomainSummary` to its stable provider zone ID and public/private visibility. Azure, Route 53, Cloudflare, and Google expose ID-aware read/write overloads. Ambiguous legacy name-only lookup fails instead of picking an arbitrary zone. Snapshot directories hash the account/zone/domain tuple; account profile names are anonymized in diagnostic exports.
 

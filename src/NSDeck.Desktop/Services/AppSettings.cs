@@ -3,6 +3,9 @@ namespace NSDeck.Desktop.Services;
 public sealed class AppSettings
 {
     public List<AccountProfile> Profiles { get; init; } = [];
+    public string? ActiveProfileId { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public AccountProfile? ActiveProfile => Profiles.FirstOrDefault(p => p.Id == ActiveProfileId) ?? Profiles.FirstOrDefault();
     public NamecheapConnectionSettings Namecheap { get; init; } = new();
     public AzureConnectionSettings Azure { get; init; } = new();
     public TokenConnectionSettings GoDaddy { get; init; } = new();
@@ -12,7 +15,7 @@ public sealed class AppSettings
     public WindowsDnsConnectionSettings WindowsDns { get; init; } = new();
     public UpdateSettings Updates { get; init; } = new();
 
-    public bool HasEnabledProvider => Profiles.Any(p => p.Connections.HasEnabledProvider) || Namecheap.Enabled || Azure.Enabled || GoDaddy.Enabled || Cloudflare.Enabled || Route53.Enabled || Google.Enabled || WindowsDns.Enabled;
+    public bool HasEnabledProvider => ActiveProfile is { } profile ? profile.Connections.HasEnabledProvider : Namecheap.Enabled || Azure.Enabled || GoDaddy.Enabled || Cloudflare.Enabled || Route53.Enabled || Google.Enabled || WindowsDns.Enabled;
 }
 
 public sealed class AccountProfile
