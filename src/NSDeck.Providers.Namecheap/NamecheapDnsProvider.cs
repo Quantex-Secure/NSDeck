@@ -28,6 +28,8 @@ public sealed class NamecheapDnsProvider : IDnsProvider, IDisposable
         _httpClient.Timeout = TimeSpan.FromSeconds(30);
     }
 
+    public string AccountId => $"namecheap/{_options.UserName}/{_options.UseSandbox}";
+
     public string ProviderName => _options.UseSandbox ? "Namecheap Sandbox" : "Namecheap";
 
     public async Task<IReadOnlyList<DomainSummary>> GetDomainsAsync(CancellationToken cancellationToken = default)
@@ -205,6 +207,8 @@ public sealed class NamecheapDnsProvider : IDnsProvider, IDisposable
         return new DnsRecord
         {
             ProviderRecordId = Attribute(element, "HostId"),
+            IsReadOnly = !DnsRecordTypes.All.Contains(type),
+            ReadOnlyReason = !DnsRecordTypes.All.Contains(type) ? "Manage this record type in Namecheap." : null,
             Name = Attribute(element, "Name") ?? "@",
             Type = type,
             Value = Attribute(element, "Address") ?? string.Empty,

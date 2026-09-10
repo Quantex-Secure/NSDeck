@@ -5,4 +5,6 @@ public sealed record ZoneSnapshot(
     string Provider,
     DateTimeOffset CreatedAt,
     string Fingerprint,
-    IReadOnlyList<DnsRecord> Records);
+    IReadOnlyList<DnsRecord> Records,
+    string? AccountId = null,
+    string? ZoneId = null);

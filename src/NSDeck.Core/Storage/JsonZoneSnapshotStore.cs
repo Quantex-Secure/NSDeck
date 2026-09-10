@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.Security.Cryptography;
+using System.Text;
 using NSDeck.Core.Models;
 
 namespace NSDeck.Core.Storage;
@@ -12,10 +14,10 @@ public sealed class JsonZoneSnapshotStore(string rootPath) : IZoneSnapshotStore
 
     public async Task SaveAsync(ZoneSnapshot snapshot, CancellationToken cancellationToken = default)
     {
-        var domainPath = GetDomainPath(snapshot.Domain);
+        var domainPath = GetTargetPath(snapshot.Domain, snapshot.AccountId, snapshot.ZoneId);
         Directory.CreateDirectory(domainPath);
         var stamp = snapshot.CreatedAt.UtcDateTime.ToString("yyyyMMdd-HHmmss-fff");
-        var path = Path.Combine(domainPath, $"{stamp}.json");
+        var path = Path.Combine(domainPath, $"{stamp}-{Guid.NewGuid():N}.json");
         var temporaryPath = path + ".tmp";
         try
         {
@@ -55,6 +57,27 @@ public sealed class JsonZoneSnapshotStore(string rootPath) : IZoneSnapshotStore
 
         return snapshots;
     }
+
+    public async Task<IReadOnlyList<ZoneSnapshot>> GetRecentForTargetAsync(string domain, string accountId, string? zoneId, int count = 20, CancellationToken cancellationToken = default)
+    {
+        var path = GetTargetPath(domain, accountId, zoneId);
+        if (!Directory.Exists(path)) return [];
+        var result = new List<ZoneSnapshot>();
+        foreach (var file in Directory.EnumerateFiles(path, "*.json").OrderDescending().Take(count))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                var snapshot = JsonSerializer.Deserialize<ZoneSnapshot>(await File.ReadAllTextAsync(file, cancellationToken), JsonOptions);
+                if (snapshot is not null && snapshot.AccountId == accountId && snapshot.ZoneId == zoneId && snapshot.Domain.Equals(domain, StringComparison.OrdinalIgnoreCase)) result.Add(snapshot);
+            }
+            catch (JsonException) { /* A damaged snapshot must not hide other recovery points. */ }
+        }
+        return result;
+    }
+
+    private string GetTargetPath(string domain, string? account, string? zone) => account is null ? GetDomainPath(domain) :
+        Path.Combine(rootPath, "targets", Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new[] { account, zone, domain.ToLowerInvariant() })))));
 
     private string GetDomainPath(string domain)
     {

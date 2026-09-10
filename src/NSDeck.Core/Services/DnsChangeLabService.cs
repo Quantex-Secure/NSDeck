@@ -43,19 +43,22 @@ public sealed class DnsChangeLabService
         {
             foreach (var domain in scope.Domains)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 current++;
                 progress?.Report($"Reading {domain.Name} from {scope.Provider.ProviderName} ({current} of {total})…");
                 try
                 {
-                    var zone = await scope.Provider.GetZoneAsync(domain.Name, cancellationToken);
+                    var provider = scope.Provider.ForZone(domain);
+                    var zone = await provider.GetZoneAsync(domain.Name, cancellationToken);
                     if (!zone.IsUsingProviderDns)
                     {
                         errors.Add($"{scope.Provider.ProviderName} / {domain.Name}: the zone is not active on this provider.");
                         continue;
                     }
-                    zones.Add(new DnsInventoryZone(scope.Provider, scope.Provider.ProviderName, domain.Name,
+                    zones.Add(new DnsInventoryZone(provider, provider.ProviderName, domain.Name,
                         zone.Records.Select(record => record.Clone()).ToArray(), zone.RetrievedAt));
                 }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
                 catch (Exception exception)
                 {
                     errors.Add($"{scope.Provider.ProviderName} / {domain.Name}: {exception.Message}");
@@ -80,6 +83,7 @@ public sealed class DnsChangeLabService
         foreach (var group in changes.GroupBy(change => change.Zone))
         {
             var zone = group.Key;
+            if (zone.Provider.IsReadOnly) throw new InvalidOperationException($"{zone.ProviderName} is read-only.");
             progress?.Report($"Preflighting {zone.Domain} on {zone.ProviderName}…");
             var fresh = await zone.Provider.GetZoneAsync(zone.Domain, cancellationToken);
             if (ZoneComparer.Fingerprint(fresh.Records) != ZoneComparer.Fingerprint(zone.Records))
@@ -89,7 +93,7 @@ public sealed class DnsChangeLabService
             }
 
             var desired = BuildDesiredRecords(fresh.Records, group.ToArray());
-            var validation = ZoneValidator.Validate(desired);
+            var validation = zone.Provider.ValidateRecords(desired);
             if (!validation.IsValid)
             {
                 operations.Add(new DnsZoneOperationResult(zone.ProviderName, zone.Domain, "Stopped", validation.ErrorSummary));
@@ -97,7 +101,7 @@ public sealed class DnsChangeLabService
             }
 
             var snapshot = new ZoneSnapshot(zone.Domain, zone.ProviderName, DateTimeOffset.Now,
-                ZoneComparer.Fingerprint(fresh.Records), fresh.Records.Select(record => record.Clone()).ToArray());
+                ZoneComparer.Fingerprint(fresh.Records), fresh.Records.Select(record => record.Clone()).ToArray(), zone.Provider.AccountId, zone.Provider.ZoneId);
             await _snapshotStore.SaveAsync(snapshot, cancellationToken);
             prepared.Add(new PreparedZone(zone, fresh.Records.Select(record => record.Clone()).ToArray(), desired, group.ToArray()));
         }
@@ -110,8 +114,8 @@ public sealed class DnsChangeLabService
                 progress?.Report($"Applying {item.Changes.Count} change{(item.Changes.Count == 1 ? string.Empty : "s")} to {item.Zone.Domain}…");
                 await AuditAsync(new DnsAuditEntry(DateTimeOffset.Now, "change-lab-apply", item.Zone.ProviderName,
                     item.Zone.Domain, "started", item.Changes.Count, ZoneComparer.Fingerprint(item.Desired)), cancellationToken);
-                await item.Zone.Provider.ReplaceZoneAsync(item.Zone.Domain, item.Desired, cancellationToken);
                 written.Add(item);
+                await item.Zone.Provider.ReplaceZoneGuardedAsync(item.Zone.Domain, item.Original, item.Desired, cancellationToken);
                 var verified = await WaitForVerificationAsync(item.Zone, item.Desired, progress, cancellationToken);
                 if (!verified)
                     throw new InvalidOperationException($"{item.Zone.ProviderName} accepted the update for {item.Zone.Domain}, but it did not verify within 30 seconds.");
@@ -131,14 +135,18 @@ public sealed class DnsChangeLabService
                 try
                 {
                     progress?.Report($"Rolling back {item.Zone.Domain} on {item.Zone.ProviderName}…");
-                    await item.Zone.Provider.ReplaceZoneAsync(item.Zone.Domain, item.Original, CancellationToken.None);
-                    var verified = await WaitForVerificationAsync(item.Zone, item.Original, progress, CancellationToken.None);
+                    using var recoveryTimeout = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+                    var live = await item.Zone.Provider.GetZoneAsync(item.Zone.Domain, recoveryTimeout.Token);
+                    var restore = ZoneRecovery.Build(item.Original, item.Desired, live.Records);
+                    if (ZoneComparer.Fingerprint(live.Records) != ZoneComparer.Fingerprint(restore))
+                        await item.Zone.Provider.ReplaceZoneGuardedAsync(item.Zone.Domain, live.Records, restore, recoveryTimeout.Token);
+                    var verified = await WaitForVerificationAsync(item.Zone, restore, progress, recoveryTimeout.Token);
                     rollbackSucceeded &= verified;
                     operations.Add(new DnsZoneOperationResult(item.Zone.ProviderName, item.Zone.Domain,
                         verified ? "Rolled back and verified" : "Rollback verification timed out"));
                     await AuditAsync(new DnsAuditEntry(DateTimeOffset.Now, "change-lab-rollback", item.Zone.ProviderName,
                         item.Zone.Domain, verified ? "verified" : "verification-timeout", item.Changes.Count,
-                        ZoneComparer.Fingerprint(item.Original)), CancellationToken.None);
+                        ZoneComparer.Fingerprint(restore)), CancellationToken.None);
                 }
                 catch (Exception rollbackException)
                 {
@@ -187,6 +195,9 @@ public sealed class DnsChangeLabService
             {
                 LocalId = existing.LocalId,
                 ProviderRecordId = existing.ProviderRecordId,
+                ProviderMetadata = existing.ProviderMetadata,
+                IsReadOnly = existing.IsReadOnly,
+                ReadOnlyReason = existing.ReadOnlyReason,
                 Name = change.Updated.Name,
                 Type = change.Updated.Type,
                 Value = change.Updated.Value,

@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 #Requires -RunAsAdministrator
 
 [CmdletBinding(SupportsShouldProcess)]
@@ -92,11 +92,18 @@ $script:SupportedTypes = @('A', 'AAAA', 'CNAME', 'MX', 'NS', 'PTR', 'SRV', 'TXT'
 function ConvertTo-NSDeckRecordModel {
     param(
         [Parameter(Mandatory = $true)]$Record,
-        [switch]$IncludeSource
+        [switch]$IncludeSource,
+        [switch]$IncludeProtected
     )
 
     $type = ([string]$Record.RecordType).ToUpperInvariant()
-    if ($script:SupportedTypes -notcontains $type) { return }
+    $isProtected = ($script:SupportedTypes -notcontains $type) -or ($type -eq 'NS' -and ([string]$Record.HostName -eq '@' -or [string]::IsNullOrWhiteSpace([string]$Record.HostName)))
+    if ($isProtected) {
+        if ($IncludeProtected) {
+            [pscustomobject]@{ Name = if ([string]::IsNullOrWhiteSpace([string]$Record.HostName)) { '@' } else { [string]$Record.HostName }; Type = $type; Value = ($Record.RecordData | ConvertTo-Json -Compress -Depth 4); TtlSeconds = [int]$Record.TimeToLive.TotalSeconds; Priority = $null; IsReadOnly = $true }
+        }
+        return
+    }
     $data = $Record.RecordData
     $value = switch ($type) {
         'A'     { [string]$data.IPv4Address.IPAddressToString }
@@ -147,7 +154,7 @@ function Get-NSDeckDnsRecord {
 
     $null = DnsServer\Get-DnsServerZone -Name $ZoneName -ErrorAction Stop
     DnsServer\Get-DnsServerResourceRecord -ZoneName $ZoneName -ErrorAction Stop |
-        ForEach-Object { ConvertTo-NSDeckRecordModel -Record $_ }
+        ForEach-Object { ConvertTo-NSDeckRecordModel -Record $_ -IncludeProtected }
 }
 
 function Add-NSDeckDnsRecord {

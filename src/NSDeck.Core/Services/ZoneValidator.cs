@@ -23,7 +23,7 @@ public static class ZoneValidator
             return new ZoneValidationResult(issues);
         }
 
-        foreach (var record in records)
+        foreach (var record in records.Where(r => !r.IsReadOnly))
         {
             var label = $"{record.Name} {record.Type}";
 
@@ -66,9 +66,29 @@ public static class ZoneValidator
             }
         }
 
+        foreach (var record in records.Where(r => !r.IsReadOnly))
+        {
+            if (record.Name.Length > 253 || record.Name.Any(char.IsWhiteSpace) || record.Name.Split('.').Any(label => label.Length > 63))
+                issues.Add(new ValidationIssue($"{record.Name}: use a DNS name with labels of at most 63 characters."));
+            if (record.Type.Equals("MX", StringComparison.OrdinalIgnoreCase) && record.Priority is < 0 or > 65535)
+                issues.Add(new ValidationIssue($"{record.Name}: MX priority must be 0–65535."));
+            if (record.Type.Equals("SRV", StringComparison.OrdinalIgnoreCase))
+            {
+                var parts = record.Value.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length != 4 || parts.Take(3).Any(p => !ushort.TryParse(p, out _)))
+                    issues.Add(new ValidationIssue($"{record.Name}: SRV requires priority weight port target; numbers must be 0–65535."));
+            }
+            if (record.Type.Equals("CAA", StringComparison.OrdinalIgnoreCase))
+            {
+                var parts = record.Value.Split(' ', 3, StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length != 3 || !byte.TryParse(parts[0], out _) || parts[1].Any(c => !char.IsAsciiLetterOrDigit(c)))
+                    issues.Add(new ValidationIssue($"{record.Name}: CAA requires flags (0–255), tag, and value."));
+            }
+        }
+
         foreach (var group in records.GroupBy(record => record.Name, StringComparer.OrdinalIgnoreCase))
         {
-            if (group.Any(record => record.Type.Equals("CNAME", StringComparison.OrdinalIgnoreCase)) && group.Count() > 1)
+            if (group.Any(record => !record.IsReadOnly && record.Type.Equals("CNAME", StringComparison.OrdinalIgnoreCase)) && group.Count(r => !r.IsReadOnly) > 1)
             {
                 issues.Add(new ValidationIssue($"{group.Key} has a CNAME and another record. A CNAME must be the only record at its name."));
             }

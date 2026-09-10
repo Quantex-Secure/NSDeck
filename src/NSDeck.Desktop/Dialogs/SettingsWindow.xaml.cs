@@ -45,6 +45,7 @@ public partial class SettingsWindow : Window
         WindowsDnsPublicAuthoritative.IsChecked = settings.WindowsDns.SupportsPublicDnsPropagation;
         UpdatesAutomatic.IsChecked = settings.Updates.CheckAutomatically;
         UpdateManifestUrl.Text = settings.Updates.ManifestUrl;
+        TrustedSignerThumbprint.Text = settings.Updates.TrustedSignerThumbprint;
     }
 
     public AppSettings? Result { get; private set; }
@@ -90,7 +91,7 @@ public partial class SettingsWindow : Window
             Route53 = new AwsConnectionSettings { Enabled = Route53Enabled.IsChecked == true, AccessKeyId = AwsAccessKeyId.Text.Trim(), SecretAccessKey = AwsSecretAccessKey.Password.Trim(), SessionToken = AwsSessionToken.Password.Trim() },
             Google = new GoogleConnectionSettings { Enabled = GoogleEnabled.IsChecked == true, ProjectId = GoogleProjectId.Text.Trim(), ServiceAccountJsonPath = GoogleCredentialsPath.Text.Trim() },
             WindowsDns = new WindowsDnsConnectionSettings { Enabled = WindowsDnsEnabled.IsChecked == true, Servers = WindowsDnsServers.Text.Trim(), EndpointName = WindowsDnsEndpointName.Text.Trim(), SupportsPublicDnsPropagation = WindowsDnsPublicAuthoritative.IsChecked == true },
-            Updates = new UpdateSettings { CheckAutomatically = UpdatesAutomatic.IsChecked == true, ManifestUrl = UpdateManifestUrl.Text.Trim() }
+            Updates = new UpdateSettings { CheckAutomatically = UpdatesAutomatic.IsChecked == true, ManifestUrl = UpdateManifestUrl.Text.Trim(), TrustedSignerThumbprint = TrustedSignerThumbprint.Text.Trim() }
         };
         DialogResult = true;
     }
@@ -114,7 +115,7 @@ public partial class SettingsWindow : Window
             var results = new List<string>();
             foreach (var server in servers)
             {
-                var provider = new WindowsDnsProvider(new WindowsDnsOptions(server, WindowsDnsEndpointName.Text.Trim()));
+                using var provider = new WindowsDnsProvider(new WindowsDnsOptions(server, WindowsDnsEndpointName.Text.Trim()));
                 var zones = await provider.GetDomainsAsync();
                 results.Add($"{server}: {zones.Count} zone{(zones.Count == 1 ? string.Empty : "s")}");
             }

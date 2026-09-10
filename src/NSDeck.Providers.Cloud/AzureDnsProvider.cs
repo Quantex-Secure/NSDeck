@@ -27,6 +27,18 @@ public sealed class AzureDnsProvider : JsonDnsProviderBase, IDnsProvider
             : new DefaultAzureCredential(new DefaultAzureCredentialOptions { ExcludeInteractiveBrowserCredential = false }));
     }
 
+    public ZoneValidationResult ValidateRecords(IReadOnlyList<DnsRecord> records)
+    {
+        var basic = ZoneValidator.Validate(records);
+        if (!basic.IsValid) return basic;
+        try { foreach (var group in records.Where(r => !r.IsReadOnly).GroupBy(DnsProviderHelpers.GroupKey)) BuildRecordSetBody(group.ToArray()); }
+        catch (Exception ex) when (ex is InvalidOperationException or FormatException or OverflowException)
+        { return new ZoneValidationResult([new ValidationIssue(ex.Message)]); }
+        return basic;
+    }
+
+    public string AccountId => "azure/" + _options.SubscriptionId;
+
     public string ProviderName => "Azure DNS";
 
     public async Task<IReadOnlyList<DomainSummary>> GetDomainsAsync(CancellationToken cancellationToken = default)
@@ -43,8 +55,8 @@ public sealed class AzureDnsProvider : JsonDnsProviderBase, IDnsProvider
                 {
                     var name = zone.GetProperty("name").GetString()!;
                     var id = zone.GetProperty("id").GetString()!;
-                    _zoneIds[name] = id;
-                    domains.Add(new DomainSummary(name, ProviderName));
+                    _zoneIds[name] = _zoneIds.ContainsKey(name) ? string.Empty : id;
+                    domains.Add(new DomainSummary(name, ProviderName, ZoneId: id));
                 }
             }
             url = document.RootElement.TryGetProperty("nextLink", out var next) ? next.GetString() : null;
@@ -52,21 +64,35 @@ public sealed class AzureDnsProvider : JsonDnsProviderBase, IDnsProvider
         return domains.OrderBy(domain => domain.Name, StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
-    public async Task<DnsZone> GetZoneAsync(string domain, CancellationToken cancellationToken = default)
+    public Task<DnsZone> GetZoneAsync(string domain, CancellationToken cancellationToken = default) => GetZoneAsync(new DomainSummary(domain, ProviderName), cancellationToken);
+
+    public async Task<DnsZone> GetZoneAsync(DomainSummary target, CancellationToken cancellationToken = default)
     {
-        var zoneId = await GetZoneIdAsync(domain, cancellationToken);
+        var domain = target.Name;
+        var zoneId = target.ZoneId ?? await GetZoneIdAsync(domain, cancellationToken);
         return new DnsZone(domain, ProviderName, await ReadRecordsAsync(domain, zoneId, cancellationToken), DateTimeOffset.Now);
     }
 
-    public async Task ReplaceZoneAsync(string domain, IReadOnlyList<DnsRecord> records, CancellationToken cancellationToken = default)
+    public Task ReplaceZoneAsync(string domain, IReadOnlyList<DnsRecord> records, CancellationToken ct = default) => ReplaceCoreAsync(new DomainSummary(domain, ProviderName), records, null, ct);
+    public Task ReplaceZoneAsync(DomainSummary zone, IReadOnlyList<DnsRecord> records, CancellationToken ct = default) => ReplaceCoreAsync(zone, records, null, ct);
+    public Task ReplaceZoneGuardedAsync(DomainSummary zone, IReadOnlyList<DnsRecord> expected, IReadOnlyList<DnsRecord> records, CancellationToken ct = default) => ReplaceCoreAsync(zone, records, expected, ct);
+    public Task ReplaceZoneGuardedAsync(string domain, IReadOnlyList<DnsRecord> expected, IReadOnlyList<DnsRecord> records, CancellationToken ct = default) => ReplaceCoreAsync(new DomainSummary(domain, ProviderName), records, expected, ct);
+
+    private async Task ReplaceCoreAsync(DomainSummary target, IReadOnlyList<DnsRecord> records, IReadOnlyList<DnsRecord>? expected, CancellationToken cancellationToken)
     {
+        var domain = target.Name;
         var validation = ZoneValidator.Validate(records);
         if (!validation.IsValid) throw new InvalidOperationException(validation.ErrorSummary);
-        var zoneId = await GetZoneIdAsync(domain, cancellationToken);
-        var current = await ReadRecordsAsync(domain, zoneId, cancellationToken);
+        var zoneId = target.ZoneId ?? await GetZoneIdAsync(domain, cancellationToken);
+        var allCurrent = await ReadRecordsAsync(domain, zoneId, cancellationToken);
+        ZoneWriteGuard.Check(allCurrent, expected, records);
+        var current = allCurrent.Where(r => !r.IsReadOnly).ToArray();
+        records = records.Where(r => !r.IsReadOnly).ToArray();
         var currentGroups = current.GroupBy(DnsProviderHelpers.GroupKey).ToDictionary(group => group.Key, group => group.ToArray());
         var desiredGroups = records.GroupBy(DnsProviderHelpers.GroupKey).ToDictionary(group => group.Key, group => group.ToArray());
 
+        // Validate and materialize every payload before sending even the first deletion.
+        var bodies = desiredGroups.ToDictionary(pair => pair.Key, pair => BuildRecordSetBody(pair.Value));
         foreach (var oldGroup in currentGroups.Where(pair => !desiredGroups.ContainsKey(pair.Key)))
         {
             var record = oldGroup.Value[0];
@@ -78,7 +104,7 @@ public sealed class AzureDnsProvider : JsonDnsProviderBase, IDnsProvider
         {
             if (currentGroups.TryGetValue(desiredGroup.Key, out var old) && DnsProviderHelpers.GroupsEqual(old, desiredGroup.Value)) continue;
             var record = desiredGroup.Value[0];
-            var body = BuildRecordSetBody(desiredGroup.Value);
+            var body = bodies[desiredGroup.Key];
             var concurrencyHeader = currentGroups.ContainsKey(desiredGroup.Key)
                 ? MatchHeader(desiredGroup.Key)
                 : new Dictionary<string, string> { ["If-None-Match"] = "*" };
@@ -106,7 +132,13 @@ public sealed class AzureDnsProvider : JsonDnsProviderBase, IDnsProvider
         var fullType = set.GetProperty("type").GetString() ?? string.Empty;
         var type = fullType[(fullType.LastIndexOf('/') + 1)..].ToUpperInvariant();
         var name = set.GetProperty("name").GetString() ?? "@";
-        if (type == "SOA" || (type == "NS" && name == "@")) return;
+        if (type == "SOA" || (type == "NS" && name == "@") || !DnsRecordTypes.All.Contains(type) ||
+            (set.GetProperty("properties").TryGetProperty("targetResource", out var resource) && resource.TryGetProperty("id", out var resourceId) && !string.IsNullOrEmpty(resourceId.GetString())))
+        {
+            output.Add(new DnsRecord { Name = name, Type = type, Value = set.GetProperty("properties").ToString(),
+                IsReadOnly = true, ReadOnlyReason = "Provider-managed, alias, or unsupported record set. Use Azure Portal." });
+            return;
+        }
         if (set.TryGetProperty("etag", out var etag) && !string.IsNullOrWhiteSpace(etag.GetString()))
             _recordSetEtags[DnsProviderHelpers.GroupKey(name, type)] = etag.GetString()!;
         var properties = set.GetProperty("properties");
@@ -151,7 +183,7 @@ public sealed class AzureDnsProvider : JsonDnsProviderBase, IDnsProvider
             "MX" => new { TTL = ttl, MXRecords = records.Select(record => new { preference = record.Priority ?? 0, exchange = record.Value }).ToArray() },
             "NS" => new { TTL = ttl, NSRecords = records.Select(record => new { nsdname = record.Value }).ToArray() },
             "PTR" => new { TTL = ttl, PTRRecords = records.Select(record => new { ptrdname = record.Value }).ToArray() },
-            "TXT" => new { TTL = ttl, TXTRecords = records.Select(record => new { value = new[] { record.Value } }).ToArray() },
+            "TXT" => new { TTL = ttl, TXTRecords = records.Select(record => new { value = DnsRecordSemantics.TextChunks(record.Value) }).ToArray() },
             "SRV" => BuildSrv(ttl, records),
             "CAA" => BuildCaa(ttl, records),
             _ => throw new InvalidOperationException($"Azure DNS record type {records[0].Type} is not supported by this editor.")
@@ -184,9 +216,9 @@ public sealed class AzureDnsProvider : JsonDnsProviderBase, IDnsProvider
 
     private async Task<string> GetZoneIdAsync(string domain, CancellationToken cancellationToken)
     {
-        if (_zoneIds.TryGetValue(domain, out var id)) return id;
+        if (_zoneIds.TryGetValue(domain, out var id) && !string.IsNullOrEmpty(id)) return id;
         await GetDomainsAsync(cancellationToken);
-        return _zoneIds.TryGetValue(domain, out id) ? id : throw new InvalidOperationException($"Azure DNS zone {domain} was not found.");
+        return _zoneIds.TryGetValue(domain, out id) && !string.IsNullOrEmpty(id) ? id : throw new InvalidOperationException($"Azure DNS zone {domain} was not found.");
     }
 
     private async Task<JsonDocument> SendAzureAsync(

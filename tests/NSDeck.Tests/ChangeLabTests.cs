@@ -46,7 +46,7 @@ public sealed class ChangeLabTests
     [Fact]
     public async Task Update_check_reports_a_newer_https_release()
     {
-        const string json = """{"version":"0.4.0","downloadUrl":"https://downloads.example.com/NSDeck.exe","sha256":"ABC"}""";
+        const string json = """{"version":"0.4.0","downloadUrl":"https://downloads.example.com/NSDeck.exe","sha256":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}""";
         using var service = new UpdateService(new HttpClient(new StaticJsonHandler(json)), new Version(0, 3, 0));
 
         var result = await service.CheckAsync("https://downloads.example.com/update-manifest.json");

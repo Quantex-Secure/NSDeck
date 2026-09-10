@@ -14,6 +14,7 @@ public sealed class ChangeLabRecordRow(DnsInventoryZone zone, DnsRecord record)
     public DnsRecord Record { get; } = record;
     public string Provider => Zone.ProviderName;
     public string Domain => Zone.Domain;
+    public string Target => Zone.Provider.ZoneId is null ? Domain : $"{Domain} ({Zone.Provider.ZoneId})";
     public string Name => Record.Name;
     public string Type => Record.Type;
     public string Value => Record.Value;
@@ -27,6 +28,7 @@ public sealed class ChangeLabPlanRow(DnsPlannedChange change)
     public DnsPlannedChange Change { get; } = change;
     public string Provider => Change.Zone.ProviderName;
     public string Domain => Change.Zone.Domain;
+    public string Target => Change.Zone.Provider.ZoneId is null ? Domain : $"{Domain} ({Change.Zone.Provider.ZoneId})";
     public string Name => Change.Original.Name;
     public string Type => Change.Original.Type;
     public string Before => Change.Original.Value;
@@ -44,6 +46,7 @@ public partial class ChangeLabWindow : Window
     private ICollectionView _inventoryView;
     private DnsInventoryLoadResult? _inventory;
     private bool _isBusy;
+    private CancellationTokenSource? _cancellation;
 
     public ChangeLabWindow(
         DnsChangeLabService changeLabService,
@@ -59,6 +62,7 @@ public partial class ChangeLabWindow : Window
         _inventoryView = CollectionViewSource.GetDefaultView(_inventoryRows);
         _inventoryView.Filter = FilterInventory;
         Loaded += async (_, _) => await LoadInventoryAsync();
+        Closing += (_, e) => { if (_isBusy) { e.Cancel = true; _cancellation?.Cancel(); StatusText.Text = "Cancelling; wait for any recovery checks before closing."; } };
     }
 
     private async void RefreshInventory_Click(object sender, RoutedEventArgs e) => await LoadInventoryAsync();
@@ -67,10 +71,12 @@ public partial class ChangeLabWindow : Window
     {
         if (_isBusy) return;
         SetBusy(true);
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(10));
+        _cancellation = cancellation;
         try
         {
             var progress = new Progress<string>(message => StatusText.Text = message);
-            _inventory = await _changeLabService.LoadInventoryAsync(_scopes, progress);
+            _inventory = await _changeLabService.LoadInventoryAsync(_scopes, progress, cancellation.Token);
             _inventoryRows.Clear();
             foreach (var zone in _inventory.Zones)
                 foreach (var record in zone.Records)
@@ -80,6 +86,7 @@ public partial class ChangeLabWindow : Window
                               (_inventory.Errors.Count == 0 ? "." : $"; {_inventory.Errors.Count} zones reported errors.");
             UpdateImpact();
         }
+        catch (OperationCanceledException) { StatusText.Text = "Inventory operation cancelled."; }
         catch (Exception exception)
         {
             StatusText.Text = exception.Message;
@@ -87,6 +94,7 @@ public partial class ChangeLabWindow : Window
         }
         finally
         {
+            _cancellation = null;
             SetBusy(false);
         }
     }
@@ -157,7 +165,7 @@ public partial class ChangeLabWindow : Window
         var staged = 0;
         foreach (var row in selected)
         {
-            if (!row.Value.Contains(find, StringComparison.OrdinalIgnoreCase)) continue;
+            if (row.Record.IsReadOnly || row.Zone.Provider.IsReadOnly || !row.Value.Contains(find, StringComparison.OrdinalIgnoreCase)) continue;
             var updated = row.Record.Clone();
             updated.Value = updated.Value.Replace(find, replacement, StringComparison.OrdinalIgnoreCase);
             var planned = new ChangeLabPlanRow(new DnsPlannedChange(row.Zone, row.Record.Clone(), updated));
@@ -188,16 +196,18 @@ public partial class ChangeLabWindow : Window
         var changes = _planRows.Select(row => row.Change).ToArray();
         var riskText = BuildRiskSummary(changes);
         var message = $"Apply {changes.Length} coordinated changes across {changes.Select(change => change.Zone.Domain).Distinct(StringComparer.OrdinalIgnoreCase).Count()} zones?\n\n" +
-                      "Every zone will be rechecked and snapshotted first. If a write or verification fails, completed writes will be rolled back."
+                      "Every zone will be rechecked and snapshotted first. If a write or verification fails, recovery will inspect attempted writes and restore only record sets without conflicting changes."
                       + (riskText.Length == 0 ? string.Empty : $"\n\nRisk review:\n{riskText}");
         if (MessageBox.Show(this, message, "Apply DNS Change Lab plan", MessageBoxButton.YesNo,
                 riskText.Length == 0 ? MessageBoxImage.Question : MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
 
         SetBusy(true);
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(10));
+        _cancellation = cancellation;
         try
         {
             var progress = new Progress<string>(status => StatusText.Text = status);
-            var result = await _changeLabService.ApplyAsync(changes, progress);
+            var result = await _changeLabService.ApplyAsync(changes, progress, cancellation.Token);
             var details = string.Join(Environment.NewLine, result.Operations.Select(operation =>
                 $"• {operation.Provider} {operation.Domain}: {operation.Status}{(string.IsNullOrWhiteSpace(operation.Detail) ? string.Empty : " — " + operation.Detail)}"));
             if (result.Succeeded)
@@ -222,17 +232,19 @@ public partial class ChangeLabWindow : Window
             {
                 MessageBox.Show(this, $"The coordinated transaction did not complete.\n\n{details}\n\n" +
                                       (result.RollbackAttempted
-                                          ? result.RollbackSucceeded ? "Completed writes were rolled back and verified." : "One or more rollback checks failed; review the provider zones immediately."
-                                          : "No provider writes were made."),
+                                          ? result.RollbackSucceeded ? "Attempted writes were checked and recovery was verified." : "One or more rollback checks failed; review the provider zones immediately."
+                                          : "No writes were attempted. Preflight stopped the plan."),
                     "Change Lab stopped", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
+        catch (OperationCanceledException) { StatusText.Text = "Inventory operation cancelled."; }
         catch (Exception exception)
         {
             MessageBox.Show(this, exception.Message, "Change Lab failed", MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
         {
+            _cancellation = null;
             SetBusy(false);
         }
     }
@@ -282,5 +294,6 @@ public partial class ChangeLabWindow : Window
         InventoryGrid.IsEnabled = !busy;
     }
 
+    private void CancelOperation_Click(object sender, RoutedEventArgs e) => _cancellation?.Cancel();
     private void Close_Click(object sender, RoutedEventArgs e) => Close();
 }

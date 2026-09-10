@@ -1,9 +1,11 @@
-param(
+﻿param(
     [string]$Configuration = "Release",
     [string]$CertificateThumbprint = "",
     [string]$ReleaseBaseUri = "",
     [string[]]$BlockedTerms = @()
 )
+
+$ErrorActionPreference = 'Stop'
 
 $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $projectPath = Join-Path $projectRoot "src\NSDeck.Desktop\NSDeck.Desktop.csproj"
@@ -90,9 +92,10 @@ $manifest | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $releasePath "u
 
 $inno = Get-Command ISCC.exe -ErrorAction SilentlyContinue
 if ($inno) {
-    & $inno.Source "/DSourceExe=$versionedExe" (Join-Path $projectRoot "installer\NSDeck.iss")
+    & $inno.Source "/DSourceExe=$versionedExe" "/DMyAppVersion=$version" (Join-Path $projectRoot "installer\NSDeck.iss")
     if ($LASTEXITCODE -ne 0) { throw "Installer compilation failed." }
     $installer = Get-ChildItem -LiteralPath $releasePath -Filter "NSDeck-Setup-$version.exe" | Select-Object -First 1
+    if (-not $installer) { throw "Installer output for version $version was not found." }
     if ($installer) {
         Sign-Artifact $installer.FullName
         $installerHash = (Get-FileHash -LiteralPath $installer.FullName -Algorithm SHA256).Hash
