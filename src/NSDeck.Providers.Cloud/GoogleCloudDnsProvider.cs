@@ -37,6 +37,18 @@ public sealed class GoogleCloudDnsProvider : IDnsProvider, IDisposable
         return new GoogleCloudDnsProvider(options, service);
     }
 
+    public ZoneValidationResult ValidateRecords(IReadOnlyList<DnsRecord> records)
+    {
+        var basic = ZoneValidator.Validate(records);
+        if (!basic.IsValid) return basic;
+        try { foreach (var group in records.Where(r => !r.IsReadOnly).GroupBy(DnsProviderHelpers.GroupKey)) BuildSet("example.invalid", group.ToArray()); }
+        catch (Exception ex) when (ex is InvalidOperationException or FormatException or OverflowException)
+        { return new ZoneValidationResult([new ValidationIssue(ex.Message)]); }
+        return basic;
+    }
+
+    public string AccountId => "google/" + _options.ProjectId;
+
     public string ProviderName => "Google Cloud DNS";
 
     public async Task<IReadOnlyList<DomainSummary>> GetDomainsAsync(CancellationToken cancellationToken = default)
@@ -51,28 +63,40 @@ public sealed class GoogleCloudDnsProvider : IDnsProvider, IDisposable
             var response = await request.ExecuteAsync(cancellationToken);
             foreach (var zone in response.ManagedZones ?? [])
             {
-                if (!string.Equals(zone.Visibility, "public", StringComparison.OrdinalIgnoreCase)) continue;
+
                 var domain = zone.DnsName.TrimEnd('.');
-                _zoneNames[domain] = zone.Name;
-                domains.Add(new DomainSummary(domain, ProviderName));
+                _zoneNames[domain] = _zoneNames.ContainsKey(domain) ? string.Empty : zone.Name;
+                domains.Add(new DomainSummary(domain, ProviderName, ZoneId: zone.Name, IsPublic: zone.Visibility == "public"));
             }
             pageToken = response.NextPageToken;
         } while (!string.IsNullOrWhiteSpace(pageToken));
         return domains.OrderBy(domain => domain.Name, StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
-    public async Task<DnsZone> GetZoneAsync(string domain, CancellationToken cancellationToken = default)
+    public Task<DnsZone> GetZoneAsync(string domain, CancellationToken cancellationToken = default) => GetZoneAsync(new DomainSummary(domain, ProviderName), cancellationToken);
+
+    public async Task<DnsZone> GetZoneAsync(DomainSummary target, CancellationToken cancellationToken = default)
     {
-        var zone = await GetZoneNameAsync(domain, cancellationToken);
+        var domain = target.Name;
+        var zone = target.ZoneId ?? await GetZoneNameAsync(domain, cancellationToken);
         return new DnsZone(domain, ProviderName, Flatten(domain, await ReadSetsAsync(zone, cancellationToken)), DateTimeOffset.Now);
     }
 
-    public async Task ReplaceZoneAsync(string domain, IReadOnlyList<DnsRecord> records, CancellationToken cancellationToken = default)
+    public Task ReplaceZoneAsync(string domain, IReadOnlyList<DnsRecord> records, CancellationToken ct = default) => ReplaceCoreAsync(new DomainSummary(domain, ProviderName), records, null, ct);
+    public Task ReplaceZoneAsync(DomainSummary zone, IReadOnlyList<DnsRecord> records, CancellationToken ct = default) => ReplaceCoreAsync(zone, records, null, ct);
+    public Task ReplaceZoneGuardedAsync(DomainSummary zone, IReadOnlyList<DnsRecord> expected, IReadOnlyList<DnsRecord> records, CancellationToken ct = default) => ReplaceCoreAsync(zone, records, expected, ct);
+    public Task ReplaceZoneGuardedAsync(string domain, IReadOnlyList<DnsRecord> expected, IReadOnlyList<DnsRecord> records, CancellationToken ct = default) => ReplaceCoreAsync(new DomainSummary(domain, ProviderName), records, expected, ct);
+
+    private async Task ReplaceCoreAsync(DomainSummary target, IReadOnlyList<DnsRecord> records, IReadOnlyList<DnsRecord>? expected, CancellationToken cancellationToken)
     {
+        var domain = target.Name;
         var validation = ZoneValidator.Validate(records);
         if (!validation.IsValid) throw new InvalidOperationException(validation.ErrorSummary);
-        var zone = await GetZoneNameAsync(domain, cancellationToken);
-        var currentSets = (await ReadSetsAsync(zone, cancellationToken)).Where(set => IsEditable(set, domain)).ToArray();
+        var zone = target.ZoneId ?? await GetZoneNameAsync(domain, cancellationToken);
+        var allSets = await ReadSetsAsync(zone, cancellationToken);
+        ZoneWriteGuard.Check(Flatten(domain, allSets), expected, records);
+        records = records.Where(r => !r.IsReadOnly).ToArray();
+        var currentSets = allSets.Where(set => IsEditable(set, domain)).ToArray();
         var currentGroups = Flatten(domain, currentSets).GroupBy(DnsProviderHelpers.GroupKey).ToDictionary(group => group.Key, group => group.ToArray());
         var currentSetByKey = currentSets.ToDictionary(set => DnsProviderHelpers.GroupKey(DnsProviderHelpers.ToRelativeName(set.Name, domain), set.Type));
         var desiredGroups = records.GroupBy(DnsProviderHelpers.GroupKey).ToDictionary(group => group.Key, group => group.ToArray());
@@ -108,7 +132,20 @@ public sealed class GoogleCloudDnsProvider : IDnsProvider, IDisposable
     private static IReadOnlyList<DnsRecord> Flatten(string domain, IEnumerable<GoogleRecordSet> sets)
     {
         var records = new List<DnsRecord>();
-        foreach (var set in sets.Where(set => IsEditable(set, domain)))
+        foreach (var set in sets)
+        {
+            if (!IsEditable(set, domain))
+            {
+                records.Add(new DnsRecord { Name = DnsProviderHelpers.ToRelativeName(set.Name, domain), Type = set.Type,
+                    Value = System.Text.Json.JsonSerializer.Serialize(set), IsReadOnly = true,
+                    ReadOnlyReason = "Provider-managed or routing-policy record. Use Google Cloud Console." });
+                continue;
+            }
+            AddEditable(set);
+        }
+        return records;
+
+        void AddEditable(GoogleRecordSet set)
         {
             foreach (var value in set.Rrdatas ?? [])
             {
@@ -120,13 +157,12 @@ public sealed class GoogleCloudDnsProvider : IDnsProvider, IDisposable
                 });
             }
         }
-        return records;
     }
 
     private static bool IsEditable(GoogleRecordSet set, string domain)
     {
         var apex = DnsProviderHelpers.ToRelativeName(set.Name, domain) == "@";
-        return set.Type != "SOA" && !(set.Type == "NS" && apex) && set.Rrdatas is { Count: > 0 };
+        return DnsRecordTypes.All.Contains(set.Type) && set.RoutingPolicy is null && set.Type != "SOA" && !(set.Type == "NS" && apex) && set.Rrdatas is { Count: > 0 };
     }
 
     private static GoogleRecordSet BuildSet(string domain, IReadOnlyList<DnsRecord> records)
@@ -142,9 +178,9 @@ public sealed class GoogleCloudDnsProvider : IDnsProvider, IDisposable
 
     private async Task<string> GetZoneNameAsync(string domain, CancellationToken cancellationToken)
     {
-        if (_zoneNames.TryGetValue(domain, out var name)) return name;
+        if (_zoneNames.TryGetValue(domain, out var name) && !string.IsNullOrEmpty(name)) return name;
         await GetDomainsAsync(cancellationToken);
-        return _zoneNames.TryGetValue(domain, out name) ? name : throw new InvalidOperationException($"Google Cloud DNS zone {domain} was not found.");
+        return _zoneNames.TryGetValue(domain, out name) && !string.IsNullOrEmpty(name) ? name : throw new InvalidOperationException($"Google Cloud DNS zone {domain} was not found.");
     }
 
     public void Dispose() => _service.Dispose();

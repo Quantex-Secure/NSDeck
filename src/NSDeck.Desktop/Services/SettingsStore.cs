@@ -12,9 +12,14 @@ public sealed class SettingsStore
 
     public SettingsStore(string rootPath)
     {
+        RootPath = rootPath;
         Directory.CreateDirectory(rootPath);
         _settingsPath = Path.Combine(rootPath, "settings.json");
     }
+
+    public string RootPath { get; }
+    internal static byte[] Protect(byte[] bytes) => Dpapi.Protect(bytes);
+    internal static byte[] Unprotect(byte[] bytes) => Dpapi.Unprotect(bytes);
 
     public async Task<AppSettings> LoadAsync(CancellationToken cancellationToken = default)
     {

@@ -14,7 +14,7 @@
         <Grid Grid.Row="3" Margin="0,0,0,14"><Grid.ColumnDefinitions><ColumnDefinition Width="130"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><TextBlock Text="Value" VerticalAlignment="Center"/><TextBox x:Name="ValueBox" Grid.Column="1" TextWrapping="Wrap" AcceptsReturn="True" Height="76" VerticalContentAlignment="Top"/></Grid>
         <Grid Grid.Row="4" Margin="0,0,0,14">
             <Grid.ColumnDefinitions><ColumnDefinition Width="130"/><ColumnDefinition Width="190"/><ColumnDefinition Width="90"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-            <TextBlock Text="TTL" VerticalAlignment="Center"/><ComboBox x:Name="TtlBox" Grid.Column="1" DisplayMemberPath="Label" SelectedValuePath="Seconds"/>
+            <TextBlock Text="TTL" VerticalAlignment="Center"/><ComboBox x:Name="TtlBox" Grid.Column="1" IsEditable="True" ToolTip="TTL in seconds. Cloudflare uses 1 for Automatic. Provider limits are checked before applying."/>
             <TextBlock Grid.Column="2" Text="Priority" VerticalAlignment="Center" Margin="22,0,0,0"/><TextBox x:Name="PriorityBox" Grid.Column="3"/>
         </Grid>
         <Border Grid.Row="5" Padding="14" Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="4" VerticalAlignment="Top">

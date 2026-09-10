@@ -2,6 +2,7 @@ namespace NSDeck.Desktop.Services;
 
 public sealed class AppSettings
 {
+    public List<AccountProfile> Profiles { get; init; } = [];
     public NamecheapConnectionSettings Namecheap { get; init; } = new();
     public AzureConnectionSettings Azure { get; init; } = new();
     public TokenConnectionSettings GoDaddy { get; init; } = new();
@@ -11,11 +12,21 @@ public sealed class AppSettings
     public WindowsDnsConnectionSettings WindowsDns { get; init; } = new();
     public UpdateSettings Updates { get; init; } = new();
 
-    public bool HasEnabledProvider => Namecheap.Enabled || Azure.Enabled || GoDaddy.Enabled || Cloudflare.Enabled || Route53.Enabled || Google.Enabled || WindowsDns.Enabled;
+    public bool HasEnabledProvider => Profiles.Any(p => p.Connections.HasEnabledProvider) || Namecheap.Enabled || Azure.Enabled || GoDaddy.Enabled || Cloudflare.Enabled || Route53.Enabled || Google.Enabled || WindowsDns.Enabled;
+}
+
+public sealed class AccountProfile
+{
+    public string Id { get; init; } = Guid.NewGuid().ToString("N");
+    public string Name { get; init; } = "Default";
+    public bool ReadOnly { get; init; }
+    public AppSettings Connections { get; init; } = new();
+    public override string ToString() => Name + (ReadOnly ? " (read-only)" : "");
 }
 
 public sealed class UpdateSettings
 {
+    public string TrustedSignerThumbprint { get; init; } = "";
     public bool CheckAutomatically { get; init; }
     public string ManifestUrl { get; init; } = "";
 }

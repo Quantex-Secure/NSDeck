@@ -16,6 +16,16 @@ public sealed class GoDaddyDnsProvider : JsonDnsProviderBase, IDnsProvider
         _options = options;
     }
 
+    public ZoneValidationResult ValidateRecords(IReadOnlyList<DnsRecord> records)
+    {
+        var basic = ZoneValidator.Validate(records);
+        if (!basic.IsValid) return basic;
+        try { if (records.Any(r => !r.IsReadOnly && r.TtlSeconds < 600)) throw new InvalidOperationException("GoDaddy requires TTLs of at least 600 seconds."); foreach (var r in records.Where(r => !r.IsReadOnly)) ToApiRecord(r); }
+        catch (Exception ex) when (ex is InvalidOperationException or FormatException or OverflowException)
+        { return new ZoneValidationResult([new ValidationIssue(ex.Message)]); }
+        return basic;
+    }
+
     public string ProviderName => "GoDaddy";
 
     public async Task<IReadOnlyList<DomainSummary>> GetDomainsAsync(CancellationToken cancellationToken = default)
@@ -53,7 +63,7 @@ public sealed class GoDaddyDnsProvider : JsonDnsProviderBase, IDnsProvider
             {
                 var type = item.GetProperty("type").GetString()?.ToUpperInvariant() ?? "A";
                 var name = item.GetProperty("name").GetString() ?? "@";
-                if (type == "SOA" || (type == "NS" && name == "@")) continue;
+                var readOnly = type == "SOA" || (type == "NS" && name == "@") || !DnsRecordTypes.All.Contains(type);
                 var data = item.TryGetProperty("data", out var dataValue) ? dataValue.GetString() ?? string.Empty : string.Empty;
                 var priority = item.TryGetProperty("priority", out var priorityValue) && priorityValue.TryGetInt32(out var parsedPriority)
                     ? parsedPriority : (int?)null;
@@ -67,6 +77,8 @@ public sealed class GoDaddyDnsProvider : JsonDnsProviderBase, IDnsProvider
                 records.Add(new DnsRecord
                 {
                     Name = name,
+                    IsReadOnly = readOnly, ReadOnlyReason = readOnly ? "Manage this record in GoDaddy." : null,
+                    ProviderMetadata = readOnly ? item.GetRawText() : null,
                     Type = type,
                     Value = data,
                     TtlSeconds = ReadInt(item, "ttl", 600),
@@ -81,15 +93,17 @@ public sealed class GoDaddyDnsProvider : JsonDnsProviderBase, IDnsProvider
     {
         var validation = ZoneValidator.Validate(records);
         if (!validation.IsValid) throw new InvalidOperationException(validation.ErrorSummary);
-        if (records.Any(record => record.TtlSeconds < 600))
+        if (records.Any(record => !record.IsReadOnly && record.TtlSeconds < 600))
             throw new InvalidOperationException("GoDaddy requires DNS TTL values of at least 600 seconds.");
 
         using var _ = await SendJsonAsync(HttpMethod.Put,
-            $"{ApiBase}/v1/domains/{Uri.EscapeDataString(domain)}/records", records.Select(ToApiRecord).ToArray(), _options.AccessToken, cancellationToken);
+            $"{ApiBase}/v1/domains/{Uri.EscapeDataString(domain)}/records", records.Where(r => r.Type != "SOA" && !(r.Type == "NS" && r.Name == "@")).Select(ToApiRecord).ToArray(), _options.AccessToken, cancellationToken);
     }
 
     private static object ToApiRecord(DnsRecord record)
     {
+        if (record.IsReadOnly && record.ProviderMetadata is not null)
+        { using var document = JsonDocument.Parse(record.ProviderMetadata); return document.RootElement.Clone(); }
         if (record.Type.Equals("SRV", StringComparison.OrdinalIgnoreCase))
         {
             var parts = record.Value.Split(' ', 4, StringSplitOptions.RemoveEmptyEntries);
