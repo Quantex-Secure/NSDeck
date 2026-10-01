@@ -39,7 +39,7 @@ jobs:
           if (Test-Path "$inno\ISCC.exe") { $env:PATH = "$inno;$env:PATH" }
           ./build-release.ps1 -ReleaseBaseUri "https://github.com/Quantex-Secure/NSDeck/releases/download/$env:RELEASE_TAG"
       - name: Upload reviewable artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: nsdeck-preview
           path: |
