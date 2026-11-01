@@ -8,6 +8,6 @@
     <ProjectReference Include="..\NSDeck.Core\NSDeck.Core.csproj" />
     <PackageReference Include="AWSSDK.Route53" Version="4.0.100.11" />
     <PackageReference Include="Azure.Identity" Version="1.21.0" />
-    <PackageReference Include="Google.Apis.Dns.v1" Version="1.75.0.4212" />
+    <PackageReference Include="Google.Apis.Dns.v1" Version="1.77.0.4299" />
   </ItemGroup>
 </Project>
